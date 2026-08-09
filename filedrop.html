@@ -1,0 +1,1179 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FileDrop — Transfert direct entre appareils</title>
+<meta name="description" content="Envoyez un fichier d'un appareil à l'autre, en direct, sans serveur intermédiaire.">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+  :root{
+    --ink:#0B1210;
+    --panel:#101A17;
+    --panel-2:#152420;
+    --line:#25352F;
+    --text:#EDF3EF;
+    --muted:#8FA79C;
+    --signal:#5EEAD4;
+    --signal-dim:#2C6D62;
+    --amber:#F5B95C;
+    --danger:#F17A6B;
+    --radius:14px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:
+      radial-gradient(ellipse 900px 500px at 50% -10%, #133128 0%, transparent 60%),
+      var(--ink);
+    color:var(--text);
+    font-family:'Segoe UI', system-ui, -apple-system, sans-serif;
+    min-height:100vh;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    padding:32px 18px 60px;
+  }
+
+  .eyebrow{
+    font-family:'Courier New', monospace;
+    letter-spacing:.24em;
+    text-transform:uppercase;
+    font-size:11px;
+    color:var(--signal);
+    opacity:.85;
+    margin-bottom:10px;
+  }
+
+  h1{
+    font-family:Georgia, 'Times New Roman', serif;
+    font-weight:400;
+    font-size:clamp(28px,6vw,42px);
+    margin:0 0 6px;
+    letter-spacing:-0.01em;
+  }
+  h1 em{
+    font-style:normal;
+    color:var(--signal);
+  }
+
+  .sub{
+    color:var(--muted);
+    font-size:14.5px;
+    max-width:440px;
+    text-align:center;
+    line-height:1.5;
+    margin-bottom:34px;
+  }
+
+  /* ---------- Signal beacon (signature element) ---------- */
+  .beacon{
+    position:relative;
+    width:120px;height:120px;
+    display:flex;align-items:center;justify-content:center;
+    margin-bottom:8px;
+  }
+  .beacon .ring{
+    position:absolute;
+    border-radius:50%;
+    border:1px solid var(--signal-dim);
+    inset:0;
+  }
+  .beacon .ring.r2{inset:-18px;opacity:.6;}
+  .beacon .ring.r3{inset:-36px;opacity:.3;}
+  .beacon.pulsing .ring{
+    animation:pulse 2.4s ease-out infinite;
+  }
+  .beacon.pulsing .ring.r2{animation-delay:.4s;}
+  .beacon.pulsing .ring.r3{animation-delay:.8s;}
+  @keyframes pulse{
+    0%{transform:scale(.85);opacity:.9;}
+    100%{transform:scale(1.35);opacity:0;}
+  }
+  .beacon-core{
+    width:56px;height:56px;border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, #8FF5E2, var(--signal) 60%, var(--signal-dim));
+    box-shadow:0 0 30px -4px var(--signal);
+    display:flex;align-items:center;justify-content:center;
+    font-size:22px;
+    z-index:2;
+  }
+  .beacon.connected .beacon-core{
+    background:radial-gradient(circle at 35% 30%, #FFE3B0, var(--amber) 60%, #8A5F22);
+    box-shadow:0 0 34px -2px var(--amber);
+  }
+  @media (prefers-reduced-motion: reduce){
+    .beacon.pulsing .ring{animation:none;}
+  }
+
+  .status-line{
+    font-family:'Courier New', monospace;
+    font-size:12.5px;
+    color:var(--muted);
+    margin-bottom:30px;
+    text-align:center;
+    min-height:16px;
+  }
+  .status-line .ok{color:var(--signal);}
+  .status-line .err{color:var(--danger);}
+
+  /* ---------- Panels ---------- */
+  .stack{
+    width:100%;
+    max-width:460px;
+    display:flex;
+    flex-direction:column;
+    gap:16px;
+  }
+
+  .panel{
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    padding:20px 22px;
+  }
+
+  .panel-label{
+    font-family:'Courier New', monospace;
+    font-size:11px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--muted);
+    margin-bottom:12px;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+  }
+
+  .my-code{
+    display:flex;
+    align-items:center;
+    gap:10px;
+  }
+  .my-code-value{
+    font-family:'Courier New', monospace;
+    font-size:26px;
+    letter-spacing:.08em;
+    font-weight:bold;
+    color:var(--text);
+    flex:1;
+  }
+  .copy-btn{
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    color:var(--muted);
+    border-radius:8px;
+    padding:8px 12px;
+    font-size:12px;
+    cursor:pointer;
+    font-family:inherit;
+    transition:.15s;
+  }
+  .copy-btn:hover{border-color:var(--signal-dim);color:var(--signal);}
+  .copy-btn:active{transform:scale(.96);}
+
+  /* ---------- Known devices ---------- */
+  .known-list{
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+  }
+  .known-item{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:10px 12px;
+  }
+  .known-item .dot{
+    width:8px;height:8px;border-radius:50%;
+    background:var(--signal-dim);
+    flex-shrink:0;
+  }
+  .known-item .info{
+    flex:1;
+    min-width:0;
+  }
+  .known-item .name{
+    font-size:13.5px;
+    color:var(--text);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  .known-item .meta{
+    font-size:11px;
+    color:var(--muted);
+    font-family:'Courier New', monospace;
+  }
+  .known-item button{
+    background:transparent;
+    border:1px solid var(--line);
+    color:var(--signal);
+    border-radius:7px;
+    padding:6px 10px;
+    font-size:12px;
+    cursor:pointer;
+    font-family:inherit;
+    white-space:nowrap;
+  }
+  .known-item button:hover{border-color:var(--signal);}
+  .known-item .remove{
+    color:var(--muted);
+    border:none;
+    padding:4px 6px;
+    font-size:14px;
+  }
+  .known-item .remove:hover{color:var(--danger);}
+
+  .connect-row{
+    display:flex;
+    gap:10px;
+  }
+  input[type=text]{
+    flex:1;
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    color:var(--text);
+    border-radius:8px;
+    padding:12px 14px;
+    font-family:'Courier New', monospace;
+    font-size:16px;
+    letter-spacing:.06em;
+    outline:none;
+    text-transform:uppercase;
+  }
+  input[type=text]:focus{border-color:var(--signal);}
+  input[type=text]::placeholder{color:var(--muted);opacity:.6;text-transform:none;font-family:inherit;letter-spacing:normal;}
+
+  button.primary{
+    background:var(--signal);
+    color:#06231D;
+    border:none;
+    border-radius:8px;
+    padding:12px 18px;
+    font-weight:600;
+    font-size:14px;
+    cursor:pointer;
+    font-family:inherit;
+    transition:.15s;
+    white-space:nowrap;
+  }
+  button.primary:hover{filter:brightness(1.08);}
+  button.primary:active{transform:scale(.97);}
+  button.primary:disabled{opacity:.4;cursor:not-allowed;}
+
+  /* ---------- Drop zone ---------- */
+  .dropzone{
+    border:1.5px dashed var(--line);
+    border-radius:var(--radius);
+    padding:36px 20px;
+    text-align:center;
+    cursor:pointer;
+    transition:.15s;
+    position:relative;
+    display:block;
+  }
+  .dropzone.active{
+    border-color:var(--signal);
+    background:rgba(94,234,212,.05);
+  }
+  .dropzone.disabled{
+    opacity:.4;
+    cursor:not-allowed;
+  }
+  .dropzone .icon{font-size:28px;margin-bottom:10px;}
+  .dropzone .main{font-size:14.5px;color:var(--text);margin-bottom:4px;}
+  .dropzone .hint{font-size:12.5px;color:var(--muted);}
+  .dropzone input[type=file]{display:none;}
+
+  /* ---------- Transfer log ---------- */
+  .log{
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+    max-height:260px;
+    overflow-y:auto;
+  }
+  .log:empty::after{
+    content:"Rien pour l'instant.";
+    color:var(--muted);
+    font-size:13px;
+  }
+  .log-item{
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:12px 14px;
+  }
+  .log-item .row1{
+    display:flex;
+    justify-content:space-between;
+    font-size:13.5px;
+    margin-bottom:8px;
+  }
+  .log-item .fname{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:230px;}
+  .log-item .fsize{color:var(--muted);font-family:'Courier New', monospace;font-size:12px;}
+  .bar-track{
+    height:5px;
+    background:var(--line);
+    border-radius:3px;
+    overflow:hidden;
+  }
+  .bar-fill{
+    height:100%;
+    background:var(--signal);
+    width:0%;
+    transition:width .15s ease;
+  }
+  .log-item.done .bar-fill{background:var(--amber);}
+  .log-item.done .row1::after{content:"✓ terminé";color:var(--amber);font-size:11px;}
+  .log-item.error .bar-fill{background:var(--danger);}
+
+  footer{
+    margin-top:40px;
+    font-size:11.5px;
+    color:var(--muted);
+    text-align:center;
+    max-width:420px;
+    line-height:1.6;
+  }
+
+  /* ---------- Tabs ---------- */
+  .tabs{
+    display:flex;
+    gap:6px;
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:999px;
+    padding:4px;
+    margin-bottom:26px;
+  }
+  .tab-btn{
+    background:transparent;
+    border:none;
+    color:var(--muted);
+    padding:9px 18px;
+    border-radius:999px;
+    font-size:13px;
+    font-family:inherit;
+    cursor:pointer;
+    transition:.15s;
+  }
+  .tab-btn.active{
+    background:var(--signal);
+    color:#06231D;
+    font-weight:600;
+  }
+  .tab-content{display:none;width:100%;max-width:460px;}
+  .tab-content.active{display:flex;flex-direction:column;gap:16px;}
+
+  /* ---------- Auth ---------- */
+  .field{
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+    margin-bottom:12px;
+  }
+  .field label{font-size:11.5px;color:var(--muted);}
+  .field input{
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    color:var(--text);
+    border-radius:8px;
+    padding:11px 13px;
+    font-size:14px;
+    font-family:inherit;
+    outline:none;
+  }
+  .field input:focus{border-color:var(--signal);}
+  .auth-actions{
+    display:flex;
+    gap:10px;
+    margin-top:6px;
+  }
+  .btn-secondary{
+    background:transparent;
+    border:1px solid var(--line);
+    color:var(--text);
+    border-radius:8px;
+    padding:11px 14px;
+    font-size:13.5px;
+    cursor:pointer;
+    font-family:inherit;
+    flex:1;
+  }
+  .btn-secondary:hover{border-color:var(--signal-dim);}
+  .btn-google{
+    width:100%;
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    color:var(--text);
+    border-radius:8px;
+    padding:11px 14px;
+    font-size:13.5px;
+    cursor:pointer;
+    font-family:inherit;
+    margin-top:14px;
+    display:flex;align-items:center;justify-content:center;gap:8px;
+  }
+  .btn-google:hover{border-color:var(--signal-dim);}
+  .auth-divider{
+    text-align:center;
+    color:var(--muted);
+    font-size:11px;
+    margin:14px 0 0;
+    position:relative;
+  }
+  .auth-error{
+    color:var(--danger);
+    font-size:12.5px;
+    margin-top:8px;
+    min-height:16px;
+  }
+  .auth-switch{
+    text-align:center;
+    font-size:12.5px;
+    color:var(--muted);
+    margin-top:16px;
+  }
+  .auth-switch a{color:var(--signal);cursor:pointer;text-decoration:underline;}
+
+  .user-bar{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    font-size:13px;
+  }
+  .user-bar .email{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:250px;}
+  .user-bar button{
+    background:transparent;
+    border:1px solid var(--line);
+    color:var(--muted);
+    border-radius:7px;
+    padding:6px 12px;
+    font-size:12px;
+    cursor:pointer;
+    font-family:inherit;
+  }
+  .user-bar button:hover{border-color:var(--danger);color:var(--danger);}
+
+  .cloud-files{
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+  }
+  .cloud-files:empty::after{
+    content:"Aucun fichier stocké pour l'instant.";
+    color:var(--muted);
+    font-size:13px;
+  }
+  .cloud-file{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:12px 14px;
+  }
+  .cloud-file .info{flex:1;min-width:0;}
+  .cloud-file .fname{font-size:13.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .cloud-file .fmeta{font-size:11px;color:var(--muted);font-family:'Courier New', monospace;}
+  .cloud-file a.dl{
+    color:var(--signal);
+    text-decoration:none;
+    border:1px solid var(--signal-dim);
+    border-radius:7px;
+    padding:6px 10px;
+    font-size:12px;
+  }
+  .cloud-file a.dl:hover{border-color:var(--signal);}
+  .cloud-file .del{
+    background:transparent;border:none;color:var(--muted);
+    cursor:pointer;font-size:15px;padding:4px 6px;
+  }
+  .cloud-file .del:hover{color:var(--danger);}
+
+  .config-warning{
+    background:#2A1810;
+    border:1px solid #8A4A2A;
+    color:#F0B98C;
+    border-radius:10px;
+    padding:14px 16px;
+    font-size:12.5px;
+    line-height:1.6;
+  }
+  .config-warning code{
+    background:#1A0F0A;
+    padding:1px 5px;
+    border-radius:4px;
+    font-size:11.5px;
+  }
+</style>
+</head>
+<body>
+
+  <div class="eyebrow">Wi-Fi local · pair à pair</div>
+  <h1>File<em>Drop</em></h1>
+  <p class="sub">Envoie un fichier directement d'un appareil à l'autre. Aucun fichier ne transite par un serveur — seule la mise en relation passe par le réseau.</p>
+
+  <div class="beacon pulsing" id="beacon">
+    <div class="ring r1"></div>
+    <div class="ring r2"></div>
+    <div class="ring r3"></div>
+    <div class="beacon-core" id="beaconCore">📡</div>
+  </div>
+  <div class="status-line" id="statusLine">Initialisation…</div>
+
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="direct">Envoi direct</button>
+    <button class="tab-btn" data-tab="cloud">Mon espace</button>
+  </div>
+
+  <div class="tab-content active" id="tabDirect">
+
+    <div class="panel">
+      <div class="panel-label">Mon code</div>
+      <div class="my-code">
+        <div class="my-code-value" id="myCode">------</div>
+        <button class="copy-btn" id="copyBtn">Copier</button>
+      </div>
+    </div>
+
+    <div class="panel" id="knownPanel" style="display:none;">
+      <div class="panel-label">Appareils connus</div>
+      <div class="known-list" id="knownList"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-label">Se connecter à un appareil</div>
+      <div class="connect-row">
+        <input type="text" id="peerInput" placeholder="Code de l'autre appareil" maxlength="6">
+        <button class="primary" id="connectBtn">Relier</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-label">Envoyer des fichiers</div>
+      <label class="dropzone disabled" id="dropzone">
+        <div class="icon">⬆</div>
+        <div class="main">Dépose un ou plusieurs fichiers ici, ou clique pour choisir</div>
+        <div class="hint" id="dropHint">Connecte-toi d'abord à un appareil</div>
+        <input type="file" id="fileInput" multiple>
+      </label>
+    </div>
+
+    <div class="panel">
+      <div class="panel-label">Journal des transferts</div>
+      <div class="log" id="log"></div>
+    </div>
+
+  </div>
+
+  <div class="tab-content" id="tabCloud">
+
+    <div class="panel config-warning" id="configWarning" style="display:none;">
+      ⚠️ Supabase n'est pas encore configuré. Ouvre le fichier HTML, cherche
+      <code>supabaseUrl</code> et <code>supabaseAnonKey</code> tout en bas, et colle
+      les valeurs de ton projet Supabase. Sans ça, "Mon espace" ne peut pas fonctionner.
+    </div>
+
+    <div class="panel" id="authPanel">
+      <div class="panel-label" id="authTitle">Se connecter</div>
+
+      <div class="field">
+        <label>Email</label>
+        <input type="email" id="authEmail" placeholder="toi@exemple.com" autocomplete="email">
+      </div>
+      <div class="field">
+        <label>Mot de passe</label>
+        <input type="password" id="authPassword" placeholder="••••••••" autocomplete="current-password">
+      </div>
+
+      <div class="auth-actions">
+        <button class="primary" id="authSubmitBtn" style="flex:1;">Se connecter</button>
+      </div>
+      <div class="auth-error" id="authError"></div>
+
+      <button class="btn-google" id="googleBtn">
+        <span>🔵</span> Continuer avec Google
+      </button>
+
+      <div class="auth-switch">
+        <span id="authSwitchText">Pas encore de compte ?</span>
+        <a id="authSwitchLink">Créer un compte</a>
+      </div>
+    </div>
+
+    <div class="panel" id="userPanel" style="display:none;">
+      <div class="user-bar">
+        <span class="email" id="userEmail"></span>
+        <button id="signOutBtn">Se déconnecter</button>
+      </div>
+    </div>
+
+    <div class="panel" id="uploadPanel" style="display:none;">
+      <div class="panel-label">Ajouter des fichiers à mon espace</div>
+      <label class="dropzone" id="cloudDropzone">
+        <div class="icon">☁</div>
+        <div class="main">Dépose un ou plusieurs fichiers ici, ou clique pour choisir</div>
+        <div class="hint">Accessible ensuite depuis n'importe quel appareil connecté à ton compte</div>
+        <input type="file" id="cloudFileInput" multiple>
+      </label>
+    </div>
+
+    <div class="panel" id="filesPanel" style="display:none;">
+      <div class="panel-label">Mes fichiers</div>
+      <div class="cloud-files" id="cloudFiles"></div>
+    </div>
+
+  </div>
+
+  <footer>
+    Aucune limite de nombre de fichiers, envoyés les uns après les autres, sans recompression — copie strictement identique à l'original.<br>
+    Ton code est fixe sur cet appareil (mémorisé dans le navigateur) et les appareils déjà reliés apparaissent dans « Appareils connus » pour te reconnecter en un clic.<br>
+    Fonctionne mieux quand les deux appareils sont sur le même Wi-Fi. Garde cette page ouverte des deux côtés pendant le transfert.
+  </footer>
+
+<script>
+(function(){
+  const beacon = document.getElementById('beacon');
+  const statusLine = document.getElementById('statusLine');
+  const myCodeEl = document.getElementById('myCode');
+  const copyBtn = document.getElementById('copyBtn');
+  const peerInput = document.getElementById('peerInput');
+  const connectBtn = document.getElementById('connectBtn');
+  const dropzone = document.getElementById('dropzone');
+  const dropHint = document.getElementById('dropHint');
+  const fileInput = document.getElementById('fileInput');
+  const logEl = document.getElementById('log');
+  const knownPanel = document.getElementById('knownPanel');
+  const knownList = document.getElementById('knownList');
+
+  const CHUNK_SIZE = 16 * 1024;
+  const STORAGE_MY_CODE = 'filedrop_my_code';
+  const STORAGE_KNOWN = 'filedrop_known_devices';
+  let peer = null;
+  let conn = null;
+  let myCode = '';
+  let currentPeerCode = null;
+
+  function setStatus(html){ statusLine.innerHTML = html; }
+  function fmtSize(bytes){
+    if(bytes < 1024) return bytes + ' o';
+    if(bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' Ko';
+    return (bytes/1024/1024).toFixed(1) + ' Mo';
+  }
+  function randomCode(){
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let s = '';
+    for(let i=0;i<6;i++) s += chars[Math.floor(Math.random()*chars.length)];
+    return s;
+  }
+
+  // ---- code de cet appareil : généré une seule fois, conservé ensuite ----
+  function getOrCreateMyCode(){
+    let saved = localStorage.getItem(STORAGE_MY_CODE);
+    if(!saved){
+      saved = randomCode();
+      localStorage.setItem(STORAGE_MY_CODE, saved);
+    }
+    return saved;
+  }
+
+  // ---- appareils connus (historique) ----
+  function getKnownDevices(){
+    try{
+      return JSON.parse(localStorage.getItem(STORAGE_KNOWN) || '[]');
+    }catch(e){ return []; }
+  }
+  function saveKnownDevices(list){
+    localStorage.setItem(STORAGE_KNOWN, JSON.stringify(list));
+  }
+  function rememberDevice(code, label){
+    const list = getKnownDevices();
+    const existing = list.find(d => d.code === code);
+    if(existing){
+      existing.lastConnected = Date.now();
+      if(label) existing.label = label;
+    } else {
+      list.push({ code, label: label || ('Appareil ' + code), lastConnected: Date.now() });
+    }
+    list.sort((a,b) => b.lastConnected - a.lastConnected);
+    saveKnownDevices(list);
+    renderKnownDevices();
+  }
+  function forgetDevice(code){
+    const list = getKnownDevices().filter(d => d.code !== code);
+    saveKnownDevices(list);
+    renderKnownDevices();
+  }
+  function fmtLastSeen(ts){
+    const diff = Date.now() - ts;
+    const min = Math.floor(diff / 60000);
+    if(min < 1) return 'à l\'instant';
+    if(min < 60) return 'il y a ' + min + ' min';
+    const h = Math.floor(min / 60);
+    if(h < 24) return 'il y a ' + h + 'h';
+    const d = Math.floor(h / 24);
+    return 'il y a ' + d + 'j';
+  }
+  function renderKnownDevices(){
+    const list = getKnownDevices();
+    if(list.length === 0){
+      knownPanel.style.display = 'none';
+      return;
+    }
+    knownPanel.style.display = 'block';
+    knownList.innerHTML = '';
+    for(const d of list){
+      const item = document.createElement('div');
+      item.className = 'known-item';
+      item.innerHTML =
+        '<span class="dot"></span>' +
+        '<div class="info"><div class="name">' + escapeHtml(d.label) + '</div>' +
+        '<div class="meta">' + d.code + ' · ' + fmtLastSeen(d.lastConnected) + '</div></div>' +
+        '<button class="reconnect">Relier</button>' +
+        '<button class="remove" title="Oublier">✕</button>';
+      item.querySelector('.reconnect').addEventListener('click', () => {
+        peerInput.value = d.code;
+        connectBtn.click();
+      });
+      item.querySelector('.remove').addEventListener('click', () => forgetDevice(d.code));
+      knownList.appendChild(item);
+    }
+  }
+
+  function initPeer(){
+    myCode = getOrCreateMyCode();
+    peer = new Peer('fd-' + myCode, {
+      config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
+    });
+
+    peer.on('open', () => {
+      myCodeEl.textContent = myCode;
+      setStatus('En attente d\'un appareil…');
+    });
+
+    peer.on('connection', (c) => {
+      setupConnection(c);
+    });
+
+    peer.on('error', (err) => {
+      if(err.type === 'peer-unavailable'){
+        setStatus('<span class="err">Aucun appareil trouvé avec ce code</span>');
+      } else if (err.type === 'unavailable-id') {
+        // notre propre code est déjà pris par une autre session ouverte ailleurs : on garde le même,
+        // PeerJS gère généralement la reconnexion sur le même id sans conflit réel.
+        setStatus('<span class="err">Cet appareil est déjà connecté ailleurs</span>');
+      } else {
+        setStatus('<span class="err">Erreur : ' + err.type + '</span>');
+      }
+    });
+  }
+
+  function setupConnection(c){
+    conn = c;
+    conn.on('open', () => {
+      const remoteCode = conn.peer.replace('fd-','');
+      currentPeerCode = remoteCode;
+      beacon.classList.add('connected');
+      setStatus('<span class="ok">Connecté à ' + remoteCode + '</span>');
+      dropzone.classList.remove('disabled');
+      dropHint.textContent = 'Le fichier sera envoyé directement à l\'appareil connecté';
+      connectBtn.disabled = true;
+      peerInput.disabled = true;
+      const known = getKnownDevices().find(d => d.code === remoteCode);
+      if(!known){
+        const label = prompt('Donner un nom à cet appareil (optionnel) :', 'Appareil ' + remoteCode);
+        rememberDevice(remoteCode, label ? label.trim() : null);
+      } else {
+        rememberDevice(remoteCode);
+      }
+    });
+
+    conn.on('close', () => resetConnection());
+    conn.on('error', () => resetConnection());
+
+    let incoming = null;
+    conn.on('data', (data) => {
+      if(data && data.type === 'meta'){
+        incoming = {
+          name: data.name,
+          size: data.size,
+          received: 0,
+          chunks: [],
+          logItem: addLogItem(data.name, data.size, 'in')
+        };
+      } else if (incoming && data instanceof ArrayBuffer) {
+        incoming.chunks.push(data);
+        incoming.received += data.byteLength;
+        updateLogItem(incoming.logItem, incoming.received / incoming.size);
+        if(incoming.received >= incoming.size){
+          finishReceiving(incoming);
+          incoming = null;
+        }
+      }
+    });
+  }
+
+  function finishReceiving(incoming){
+    const blob = new Blob(incoming.chunks);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = incoming.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    markDone(incoming.logItem);
+  }
+
+  function resetConnection(){
+    conn = null;
+    beacon.classList.remove('connected');
+    setStatus('Déconnecté. En attente d\'un appareil…');
+    dropzone.classList.add('disabled');
+    dropHint.textContent = 'Connecte-toi d\'abord à un appareil';
+    connectBtn.disabled = false;
+    peerInput.disabled = false;
+  }
+
+  connectBtn.addEventListener('click', () => {
+    const code = peerInput.value.trim().toUpperCase();
+    if(code.length < 4) return;
+    setStatus('Connexion en cours…');
+    const c = peer.connect('fd-' + code, { reliable: true });
+    setupConnection(c);
+  });
+
+  peerInput.addEventListener('keydown', (e) => {
+    if(e.key === 'Enter') connectBtn.click();
+  });
+  peerInput.addEventListener('input', () => {
+    peerInput.value = peerInput.value.toUpperCase();
+  });
+
+  copyBtn.addEventListener('click', () => {
+    navigator.clipboard.writeText(myCode).then(() => {
+      copyBtn.textContent = 'Copié !';
+      setTimeout(() => copyBtn.textContent = 'Copier', 1500);
+    });
+  });
+
+  dropzone.addEventListener('click', (e) => {
+    if(dropzone.classList.contains('disabled')) e.preventDefault();
+  });
+  fileInput.addEventListener('change', () => {
+    if(fileInput.files.length) queueFiles(fileInput.files);
+    fileInput.value = '';
+  });
+  ['dragover','dragenter'].forEach(evt => {
+    dropzone.addEventListener(evt, (e) => {
+      e.preventDefault();
+      if(!dropzone.classList.contains('disabled')) dropzone.classList.add('active');
+    });
+  });
+  ['dragleave','drop'].forEach(evt => {
+    dropzone.addEventListener(evt, (e) => {
+      e.preventDefault();
+      dropzone.classList.remove('active');
+    });
+  });
+  dropzone.addEventListener('drop', (e) => {
+    if(dropzone.classList.contains('disabled')) return;
+    if(e.dataTransfer.files.length) queueFiles(e.dataTransfer.files);
+  });
+
+  // ---- file queue : envoi séquentiel, aucune limite de nombre ----
+  const sendQueue = [];
+  let sending = false;
+
+  function queueFiles(fileList){
+    for(const f of fileList) sendQueue.push(f);
+    processQueue();
+  }
+
+  function processQueue(){
+    if(sending || sendQueue.length === 0) return;
+    sending = true;
+    const file = sendQueue.shift();
+    sendFile(file, () => {
+      sending = false;
+      processQueue();
+    });
+  }
+
+  function sendFile(file, onFinished){
+    if(!conn || !conn.open){ onFinished(); return; }
+    const logItem = addLogItem(file.name, file.size, 'out');
+    conn.send({ type: 'meta', name: file.name, size: file.size });
+
+    let offset = 0;
+    const reader = new FileReader();
+
+    function readSlice(o){
+      const slice = file.slice(o, o + CHUNK_SIZE);
+      reader.readAsArrayBuffer(slice);
+    }
+
+    reader.onload = (e) => {
+      conn.send(e.target.result);
+      offset += e.target.result.byteLength;
+      updateLogItem(logItem, offset / file.size);
+      if(offset < file.size){
+        readSlice(offset);
+      } else {
+        markDone(logItem);
+        onFinished();
+      }
+    };
+    reader.onerror = () => {
+      logItem.classList.add('error');
+      onFinished();
+    };
+
+    readSlice(0);
+  }
+
+  function addLogItem(name, size, direction){
+    const item = document.createElement('div');
+    item.className = 'log-item';
+    item.innerHTML =
+      '<div class="row1"><span class="fname">' + (direction === 'in' ? '⬇ ' : '⬆ ') + escapeHtml(name) + '</span>' +
+      '<span class="fsize">' + fmtSize(size) + '</span></div>' +
+      '<div class="bar-track"><div class="bar-fill"></div></div>';
+    logEl.prepend(item);
+    return item;
+  }
+  function updateLogItem(item, ratio){
+    item.querySelector('.bar-fill').style.width = Math.min(100, Math.round(ratio*100)) + '%';
+  }
+  function markDone(item){
+    item.classList.add('done');
+    item.querySelector('.bar-fill').style.width = '100%';
+  }
+  function escapeHtml(s){
+    return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  initPeer();
+  renderKnownDevices();
+
+  // ============================================================
+  //  Onglets
+  // ============================================================
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('tab' + btn.dataset.tab.charAt(0).toUpperCase() + btn.dataset.tab.slice(1)).classList.add('active');
+    });
+  });
+
+  // ============================================================
+  //  Mon espace (compte + stockage Firebase)
+  // ============================================================
+
+  // ⚠️ Remplace ces deux valeurs par celles de TON projet Supabase
+  // (Project Settings → API → Project URL / anon public key)
+  const supabaseUrl = "REMPLACE_MOI";
+  const supabaseAnonKey = "REMPLACE_MOI";
+  const BUCKET = "files";
+
+  const supabaseReady = supabaseUrl !== "REMPLACE_MOI";
+  const configWarning = document.getElementById('configWarning');
+  const authPanel = document.getElementById('authPanel');
+  const userPanel = document.getElementById('userPanel');
+  const uploadPanel = document.getElementById('uploadPanel');
+  const filesPanel = document.getElementById('filesPanel');
+  const authTitle = document.getElementById('authTitle');
+  const authEmail = document.getElementById('authEmail');
+  const authPassword = document.getElementById('authPassword');
+  const authSubmitBtn = document.getElementById('authSubmitBtn');
+  const authError = document.getElementById('authError');
+  const authSwitchText = document.getElementById('authSwitchText');
+  const authSwitchLink = document.getElementById('authSwitchLink');
+  const googleBtn = document.getElementById('googleBtn');
+  const userEmail = document.getElementById('userEmail');
+  const signOutBtn = document.getElementById('signOutBtn');
+  const cloudDropzone = document.getElementById('cloudDropzone');
+  const cloudFileInput = document.getElementById('cloudFileInput');
+  const cloudFilesEl = document.getElementById('cloudFiles');
+
+  let isSignUpMode = false;
+  let sb = null;
+  let currentUser = null;
+
+  if(!supabaseReady){
+    configWarning.style.display = 'block';
+  } else {
+    sb = window.supabase.createClient(supabaseUrl, supabaseAnonKey);
+
+    sb.auth.getSession().then(({ data }) => {
+      handleAuthState(data.session ? data.session.user : null);
+    });
+
+    sb.auth.onAuthStateChange((_event, session) => {
+      handleAuthState(session ? session.user : null);
+    });
+  }
+
+  function handleAuthState(user){
+    currentUser = user;
+    if(user){
+      authPanel.style.display = 'none';
+      userPanel.style.display = 'block';
+      uploadPanel.style.display = 'block';
+      filesPanel.style.display = 'block';
+      userEmail.textContent = user.email || 'Connecté';
+      loadCloudFiles(user.id);
+    } else {
+      authPanel.style.display = 'block';
+      userPanel.style.display = 'none';
+      uploadPanel.style.display = 'none';
+      filesPanel.style.display = 'none';
+      cloudFilesEl.innerHTML = '';
+    }
+  }
+
+  authSwitchLink.addEventListener('click', () => {
+    isSignUpMode = !isSignUpMode;
+    if(isSignUpMode){
+      authTitle.textContent = 'Créer un compte';
+      authSubmitBtn.textContent = 'Créer mon compte';
+      authSwitchText.textContent = 'Déjà un compte ?';
+      authSwitchLink.textContent = 'Se connecter';
+    } else {
+      authTitle.textContent = 'Se connecter';
+      authSubmitBtn.textContent = 'Se connecter';
+      authSwitchText.textContent = 'Pas encore de compte ?';
+      authSwitchLink.textContent = 'Créer un compte';
+    }
+    authError.textContent = '';
+  });
+
+  authSubmitBtn.addEventListener('click', async () => {
+    if(!supabaseReady){ authError.textContent = 'Configuration Supabase manquante.'; return; }
+    const email = authEmail.value.trim();
+    const pw = authPassword.value;
+    if(!email || !pw){ authError.textContent = 'Renseigne un email et un mot de passe.'; return; }
+    authError.textContent = '';
+    const { error } = isSignUpMode
+      ? await sb.auth.signUp({ email, password: pw })
+      : await sb.auth.signInWithPassword({ email, password: pw });
+    if(error) authError.textContent = translateAuthError(error.message);
+    else if(isSignUpMode) authError.textContent = 'Compte créé — vérifie ta boîte mail si une confirmation est demandée.';
+  });
+
+  googleBtn.addEventListener('click', async () => {
+    if(!supabaseReady){ authError.textContent = 'Configuration Supabase manquante.'; return; }
+    const { error } = await sb.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: window.location.href }
+    });
+    if(error) authError.textContent = translateAuthError(error.message);
+  });
+
+  signOutBtn.addEventListener('click', () => sb.auth.signOut());
+
+  function translateAuthError(msg){
+    const map = {
+      'User already registered': 'Cet email a déjà un compte — connecte-toi plutôt.',
+      'Invalid login credentials': 'Email ou mot de passe incorrect.',
+      'Password should be at least 6 characters': 'Mot de passe trop court (6 caractères minimum).',
+      'Unable to validate email address: invalid format': 'Adresse email invalide.'
+    };
+    return map[msg] || msg;
+  }
+
+  // ---- upload vers Supabase Storage ----
+  cloudDropzone.addEventListener('click', (e) => {
+    if(!currentUser) e.preventDefault();
+  });
+  cloudFileInput.addEventListener('change', () => {
+    if(cloudFileInput.files.length) uploadCloudFiles(cloudFileInput.files);
+    cloudFileInput.value = '';
+  });
+  ['dragover','dragenter'].forEach(evt => {
+    cloudDropzone.addEventListener(evt, (e) => { e.preventDefault(); cloudDropzone.classList.add('active'); });
+  });
+  ['dragleave','drop'].forEach(evt => {
+    cloudDropzone.addEventListener(evt, (e) => { e.preventDefault(); cloudDropzone.classList.remove('active'); });
+  });
+  cloudDropzone.addEventListener('drop', (e) => {
+    if(!currentUser) return;
+    if(e.dataTransfer.files.length) uploadCloudFiles(e.dataTransfer.files);
+  });
+
+  async function uploadCloudFiles(fileList){
+    if(!currentUser) return;
+    for(const file of fileList){
+      const path = currentUser.id + '/' + Date.now() + '_' + file.name;
+      const item = addCloudFileRow({ name: file.name, size: file.size, uploading: true }, true);
+      const { error } = await sb.storage.from(BUCKET).upload(path, file, { upsert: false });
+      if(error){
+        item.querySelector('.fmeta').textContent = 'Erreur d\'envoi : ' + error.message;
+      } else {
+        item.remove();
+        loadCloudFiles(currentUser.id);
+      }
+    }
+  }
+
+  async function loadCloudFiles(userId){
+    const { data, error } = await sb.storage.from(BUCKET).list(userId, {
+      sortBy: { column: 'created_at', order: 'desc' }
+    });
+    cloudFilesEl.innerHTML = '';
+    if(error || !data) return;
+    for(const obj of data){
+      const path = userId + '/' + obj.name;
+      const displayName = obj.name.replace(/^\d+_/, '');
+      const { data: signed } = await sb.storage.from(BUCKET).createSignedUrl(path, 3600);
+      addCloudFileRow({
+        name: displayName,
+        size: obj.metadata ? obj.metadata.size : 0,
+        url: signed ? signed.signedUrl : null,
+        path: path
+      }, false);
+    }
+  }
+
+  function addCloudFileRow({ name, size, url, path, uploading }, prependRow){
+    const row = document.createElement('div');
+    row.className = 'cloud-file';
+    row.innerHTML =
+      '<div class="info"><div class="fname">' + escapeHtml(name) + '</div>' +
+      '<div class="fmeta">' + fmtSize(size) + (uploading ? ' · envoi…' : '') + '</div></div>';
+    if(!uploading && url){
+      const a = document.createElement('a');
+      a.className = 'dl';
+      a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = 'Ouvrir';
+      row.appendChild(a);
+
+      const del = document.createElement('button');
+      del.className = 'del';
+      del.title = 'Supprimer';
+      del.textContent = '✕';
+      del.addEventListener('click', async () => {
+        if(!currentUser) return;
+        await sb.storage.from(BUCKET).remove([path]);
+        loadCloudFiles(currentUser.id);
+      });
+      row.appendChild(del);
+    }
+    if(prependRow) cloudFilesEl.prepend(row); else cloudFilesEl.appendChild(row);
+    return row;
+  }
+})();
+</script>
+
+</body>
+</html>
