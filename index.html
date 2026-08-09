@@ -330,6 +330,19 @@
   .log-item.done .bar-fill{background:var(--amber);}
   .log-item.done .row1::after{content:"✓ terminé";color:var(--amber);font-size:11px;}
   .log-item.error .bar-fill{background:var(--danger);}
+  .log-item .dl-btn{
+    display:inline-block;
+    margin-top:10px;
+    background:var(--amber);
+    color:#2A1B04;
+    text-decoration:none;
+    font-weight:600;
+    font-size:13px;
+    padding:9px 16px;
+    border-radius:8px;
+    text-align:center;
+  }
+  .log-item .dl-btn:active{transform:scale(.97);}
 
   footer{
     margin-top:40px;
@@ -652,7 +665,7 @@
   const knownPanel = document.getElementById('knownPanel');
   const knownList = document.getElementById('knownList');
 
-  const CHUNK_SIZE = 16 * 1024;
+  const CHUNK_SIZE = 64 * 1024;
   const STORAGE_MY_CODE = 'filedrop_my_code';
   const STORAGE_KNOWN = 'filedrop_known_devices';
   let peer = null;
@@ -749,7 +762,22 @@
   function initPeer(){
     myCode = getOrCreateMyCode();
     peer = new Peer('fd-' + myCode, {
-      config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun.cloudflare.com:3478' },
+          {
+            urls: [
+              'turn:openrelay.metered.ca:80',
+              'turn:openrelay.metered.ca:443',
+              'turn:openrelay.metered.ca:443?transport=tcp'
+            ],
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          }
+        ]
+      }
     });
 
     peer.on('open', () => {
@@ -822,13 +850,7 @@
   function finishReceiving(incoming){
     const blob = new Blob(incoming.chunks);
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = incoming.name;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    markDone(incoming.logItem);
+    showDownloadButton(incoming.logItem, url, incoming.name);
   }
 
   function resetConnection(){
@@ -906,36 +928,39 @@
     });
   }
 
-  function sendFile(file, onFinished){
+  async function sendFile(file, onFinished){
     if(!conn || !conn.open){ onFinished(); return; }
     const logItem = addLogItem(file.name, file.size, 'out');
     conn.send({ type: 'meta', name: file.name, size: file.size });
 
-    let offset = 0;
-    const reader = new FileReader();
+    const dc = conn.dataChannel;
+    const BUFFER_LIMIT = 4 * 1024 * 1024; // 4 Mo max en attente avant de faire une pause
 
-    function readSlice(o){
-      const slice = file.slice(o, o + CHUNK_SIZE);
-      reader.readAsArrayBuffer(slice);
-    }
-
-    reader.onload = (e) => {
-      conn.send(e.target.result);
-      offset += e.target.result.byteLength;
-      updateLogItem(logItem, offset / file.size);
-      if(offset < file.size){
-        readSlice(offset);
-      } else {
-        markDone(logItem);
-        onFinished();
+    try {
+      let offset = 0;
+      while(offset < file.size){
+        // pause si le tampon d'envoi est trop plein, pour ne pas saturer le canal
+        if(dc && dc.bufferedAmount > BUFFER_LIMIT){
+          await new Promise(resolve => {
+            const check = () => {
+              if(!dc || dc.bufferedAmount <= BUFFER_LIMIT) resolve();
+              else requestAnimationFrame(check);
+            };
+            check();
+          });
+        }
+        const slice = file.slice(offset, offset + CHUNK_SIZE);
+        const buffer = await slice.arrayBuffer();
+        conn.send(buffer);
+        offset += buffer.byteLength;
+        updateLogItem(logItem, offset / file.size);
       }
-    };
-    reader.onerror = () => {
+      markDone(logItem);
+      onFinished();
+    } catch(e){
       logItem.classList.add('error');
       onFinished();
-    };
-
-    readSlice(0);
+    }
   }
 
   function addLogItem(name, size, direction){
@@ -954,6 +979,18 @@
   function markDone(item){
     item.classList.add('done');
     item.querySelector('.bar-fill').style.width = '100%';
+  }
+  function showDownloadButton(item, url, filename){
+    item.classList.add('done');
+    item.querySelector('.bar-fill').style.width = '100%';
+    const a = document.createElement('a');
+    a.className = 'dl-btn';
+    a.href = url;
+    a.download = filename;
+    a.textContent = '⬇ Enregistrer ' + filename;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    item.appendChild(a);
   }
   function escapeHtml(s){
     return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -980,11 +1017,8 @@
 
   // ⚠️ Remplace ces deux valeurs par celles de TON projet Supabase
   // (Project Settings → API → Project URL / anon public key)
- 
-  const supabaseUrl = "https://kzzzehugyggvapgrxkwi.supabase.co";
-  const supabaseAnonKey = "sb_publishable_7gPGuXmBsCC6Szxb4RigAw_zusP1Nc3";
-
-
+  const supabaseUrl = "REMPLACE_MOI";
+  const supabaseAnonKey = "REMPLACE_MOI";
   const BUCKET = "files";
 
   const supabaseReady = supabaseUrl !== "REMPLACE_MOI";
