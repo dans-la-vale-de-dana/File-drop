@@ -807,6 +807,10 @@
     conn.on('open', () => {
       const remoteCode = conn.peer.replace('fd-','');
       currentPeerCode = remoteCode;
+      // Force un format binaire cohérent des deux côtés, quel que soit le navigateur
+      if(conn.dataChannel){
+        try { conn.dataChannel.binaryType = 'arraybuffer'; } catch(_e){}
+      }
       beacon.classList.add('connected');
       setStatus('<span class="ok">Connecté à ' + remoteCode + '</span>');
       dropzone.classList.remove('disabled');
@@ -826,8 +830,9 @@
     conn.on('error', () => resetConnection());
 
     let incoming = null;
-    conn.on('data', (data) => {
-      if(data && data.type === 'meta'){
+    conn.on('data', async (data) => {
+      if(data && typeof data === 'object' && !(data instanceof ArrayBuffer) && !(data instanceof Blob) &&
+         !ArrayBuffer.isView(data) && data.type === 'meta'){
         incoming = {
           name: data.name,
           size: data.size,
@@ -835,14 +840,29 @@
           chunks: [],
           logItem: addLogItem(data.name, data.size, 'in')
         };
-      } else if (incoming && data instanceof ArrayBuffer) {
-        incoming.chunks.push(data);
-        incoming.received += data.byteLength;
-        updateLogItem(incoming.logItem, incoming.received / incoming.size);
-        if(incoming.received >= incoming.size){
-          finishReceiving(incoming);
-          incoming = null;
-        }
+        return;
+      }
+      if(!incoming) return;
+
+      // Selon le navigateur/la plateforme, un morceau binaire peut arriver
+      // sous forme d'ArrayBuffer, de Blob, ou de vue typée (Uint8Array...).
+      // On normalise tout vers ArrayBuffer avant de continuer.
+      let chunk = null;
+      if(data instanceof ArrayBuffer){
+        chunk = data;
+      } else if(data instanceof Blob){
+        chunk = await data.arrayBuffer();
+      } else if(ArrayBuffer.isView(data)){
+        chunk = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+      }
+      if(!chunk) return;
+
+      incoming.chunks.push(chunk);
+      incoming.received += chunk.byteLength;
+      updateLogItem(incoming.logItem, incoming.received / incoming.size);
+      if(incoming.received >= incoming.size){
+        finishReceiving(incoming);
+        incoming = null;
       }
     });
   }
