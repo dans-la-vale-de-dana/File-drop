@@ -1911,6 +1911,9 @@
   let isSignUpMode = false;
   let sb = null;
   let currentUser = null;
+  let cloudRefreshInterval = null;
+  let discordBridgeEnabled = localStorage.getItem('filedrop_discord_bridge') === '1';
+  let discordChannel = null;
 
   if(!supabaseReady){
     configWarning.style.display = 'block';
@@ -1932,8 +1935,6 @@
   //  Pont Discord : relaye les messages via la table Supabase
   //  "bridge_messages" (voir supabase-setup.sql et le bot fourni)
   // ============================================================
-  let discordBridgeEnabled = localStorage.getItem('filedrop_discord_bridge') === '1';
-  let discordChannel = null;
 
   function initDiscordBridge(){
     updateDiscordToggleUI();
@@ -1990,8 +1991,6 @@
       });
     } catch(_e){}
   }
-
-  let cloudRefreshInterval = null;
 
   function handleAuthState(user){
     currentUser = user;
