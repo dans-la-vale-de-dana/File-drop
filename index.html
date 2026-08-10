@@ -253,6 +253,7 @@
   }
   .mini-btn:hover{border-color:var(--signal);}
   .mini-btn:disabled{opacity:.4;cursor:not-allowed;}
+  .mini-btn.active{background:var(--signal);color:#06231D;font-weight:600;}
   .group-list{
     display:flex;
     flex-direction:column;
@@ -1015,6 +1016,7 @@
     <div class="chat-floating-header">
       <span>💬 Discussion</span>
       <div style="display:flex;gap:8px;align-items:center;">
+        <button class="mini-btn" id="discordToggleBtn">🔗 Discord</button>
         <button class="mini-btn" id="emojiToggleBtn" disabled>😊</button>
         <button class="chat-close" id="chatCloseBtn">✕</button>
       </div>
@@ -1053,6 +1055,7 @@
   const chatFabBadge = document.getElementById('chatFabBadge');
   const chatFloating = document.getElementById('chatFloating');
   const chatCloseBtn = document.getElementById('chatCloseBtn');
+  const discordToggleBtn = document.getElementById('discordToggleBtn');
   let groupFileTarget = null;
   const groupsPanel = document.getElementById('groupsPanel');
   const groupList = document.getElementById('groupList');
@@ -1537,9 +1540,6 @@
       setStatus('En attente d\'un appareil…');
       dropzone.classList.add('disabled');
       dropHint.textContent = 'Connecte-toi d\'abord à un appareil';
-      chatInput.disabled = true;
-      chatSendBtn.disabled = true;
-      emojiToggleBtn.disabled = true;
     } else {
       beacon.classList.add('connected');
       // Si toutes les connexions actives partagent le même nom de groupe, on l'affiche
@@ -1556,10 +1556,9 @@
       dropHint.textContent = count === 1
         ? 'Le fichier sera envoyé directement à l\'appareil connecté'
         : 'Le fichier sera envoyé aux ' + count + ' appareils connectés';
-      chatInput.disabled = false;
-      chatSendBtn.disabled = false;
-      emojiToggleBtn.disabled = false;
     }
+
+    updateChatAvailability();
 
     connectedBadges.innerHTML = '';
     for(const [code, entry] of activeConnections){
@@ -1580,6 +1579,15 @@
   }
 
   // ---- discussion ----
+
+  // Le champ de saisie est utilisable dès qu'il y a un appareil connecté
+  // en direct OU que le pont Discord est actif (les deux sont indépendants).
+  function updateChatAvailability(){
+    const available = activeConnections.size > 0 || discordBridgeEnabled;
+    chatInput.disabled = !available;
+    chatSendBtn.disabled = !available;
+    emojiToggleBtn.disabled = !available;
+  }
 
   // Emoji/stickers : liste courante pour le sélecteur rapide
   const EMOJI_LIST = [
@@ -1668,11 +1676,13 @@
       ? targetCodes.map(code => activeConnections.get(code)).filter(Boolean)
       : [...activeConnections.values()];
     const recipients = entries.map(e => e.conn).filter(c => c && c.open);
-    if(recipients.length === 0) return;
     for(const c of recipients){
       try { c.send({ type: 'chat', text, icon: myDevice.icon, label: myDevice.label }); } catch(_e){}
     }
-    addChatMessage('Moi', text, true);
+    // Relais Discord uniquement pour l'envoi général (pas les envois ciblés à un groupe précis)
+    if(targetCodes === undefined || targetCodes === null) relayToDiscord(text);
+
+    if(recipients.length > 0 || discordBridgeEnabled) addChatMessage('Moi', text, true);
     if(targetCodes === undefined || targetCodes === null) chatInput.value = '';
   }
 
@@ -1914,7 +1924,74 @@
     sb.auth.onAuthStateChange((_event, session) => {
       handleAuthState(session ? session.user : null);
     });
+
+    initDiscordBridge();
   }
+
+  // ============================================================
+  //  Pont Discord : relaye les messages via la table Supabase
+  //  "bridge_messages" (voir supabase-setup.sql et le bot fourni)
+  // ============================================================
+  let discordBridgeEnabled = localStorage.getItem('filedrop_discord_bridge') === '1';
+  let discordChannel = null;
+
+  function initDiscordBridge(){
+    updateDiscordToggleUI();
+    if(discordBridgeEnabled) startDiscordBridge();
+  }
+
+  function updateDiscordToggleUI(){
+    discordToggleBtn.classList.toggle('active', discordBridgeEnabled);
+    discordToggleBtn.title = discordBridgeEnabled
+      ? 'Pont Discord activé — clique pour désactiver'
+      : 'Activer le pont vers Discord';
+  }
+
+  function startDiscordBridge(){
+    if(!sb || discordChannel) return;
+    discordChannel = sb
+      .channel('bridge_messages_incoming')
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'bridge_messages', filter: 'source=eq.discord' },
+        (payload) => {
+          const row = payload.new;
+          addChatMessage('🔗 ' + row.author + ' (Discord)', row.text, false);
+        }
+      )
+      .subscribe();
+  }
+
+  function stopDiscordBridge(){
+    if(discordChannel){
+      sb.removeChannel(discordChannel);
+      discordChannel = null;
+    }
+  }
+
+  discordToggleBtn.addEventListener('click', () => {
+    if(!supabaseReady){
+      alert('Le pont Discord nécessite que Supabase soit configuré (voir "Mon espace").');
+      return;
+    }
+    discordBridgeEnabled = !discordBridgeEnabled;
+    localStorage.setItem('filedrop_discord_bridge', discordBridgeEnabled ? '1' : '0');
+    updateDiscordToggleUI();
+    if(discordBridgeEnabled) startDiscordBridge(); else stopDiscordBridge();
+  });
+
+  // Relaye aussi un message envoyé depuis FileDrop vers Discord, si le pont est actif
+  async function relayToDiscord(text){
+    if(!discordBridgeEnabled || !sb) return;
+    try {
+      await sb.from('bridge_messages').insert({
+        source: 'filedrop',
+        author: myDevice.label,
+        text: text
+      });
+    } catch(_e){}
+  }
+
+  let cloudRefreshInterval = null;
 
   function handleAuthState(user){
     currentUser = user;
@@ -1925,12 +2002,17 @@
       filesPanel.style.display = 'block';
       userEmail.textContent = user.email || 'Connecté';
       loadCloudFiles(user.id);
+      // Revérifie régulièrement pour purger les fichiers expirés et
+      // rafraîchir le compte à rebours affiché, même si personne ne recharge la page.
+      if(cloudRefreshInterval) clearInterval(cloudRefreshInterval);
+      cloudRefreshInterval = setInterval(() => loadCloudFiles(user.id), 60 * 1000);
     } else {
       authPanel.style.display = 'block';
       userPanel.style.display = 'none';
       uploadPanel.style.display = 'none';
       filesPanel.style.display = 'none';
       cloudFilesEl.innerHTML = '';
+      if(cloudRefreshInterval){ clearInterval(cloudRefreshInterval); cloudRefreshInterval = null; }
     }
   }
 
@@ -2003,6 +2085,8 @@
     if(e.dataTransfer.files.length) uploadCloudFiles(e.dataTransfer.files);
   });
 
+  const FILE_EXPIRY_MS = 60 * 60 * 1000; // 1 heure
+
   async function uploadCloudFiles(fileList){
     if(!currentUser) return;
     for(const file of fileList){
@@ -2022,9 +2106,33 @@
     const { data, error } = await sb.storage.from(BUCKET).list(userId, {
       sortBy: { column: 'created_at', order: 'desc' }
     });
-    cloudFilesEl.innerHTML = '';
-    if(error || !data) return;
+    if(error || !data){
+      // On ne vide pas l'affichage existant sur une erreur passagère (réseau, etc.)
+      // pour éviter de donner l'impression que les fichiers ont disparu.
+      console.warn('Impossible de lister les fichiers :', error);
+      return;
+    }
+
+    const now = Date.now();
+    const stillValid = [];
+    const expired = [];
     for(const obj of data){
+      const match = obj.name.match(/^(\d+)_/);
+      const uploadedAt = match ? parseInt(match[1], 10) : now;
+      if(now - uploadedAt >= FILE_EXPIRY_MS){
+        expired.push(userId + '/' + obj.name);
+      } else {
+        stillValid.push({ obj, uploadedAt });
+      }
+    }
+
+    // Suppression réelle et définitive des fichiers expirés dans le bucket Supabase
+    if(expired.length > 0){
+      await sb.storage.from(BUCKET).remove(expired);
+    }
+
+    cloudFilesEl.innerHTML = '';
+    for(const { obj, uploadedAt } of stillValid){
       const path = userId + '/' + obj.name;
       const displayName = obj.name.replace(/^\d+_/, '');
       const { data: signed } = await sb.storage.from(BUCKET).createSignedUrl(path, 3600);
@@ -2032,17 +2140,27 @@
         name: displayName,
         size: obj.metadata ? obj.metadata.size : 0,
         url: signed ? signed.signedUrl : null,
-        path: path
+        path: path,
+        expiresAt: uploadedAt + FILE_EXPIRY_MS
       }, false);
     }
   }
 
-  function addCloudFileRow({ name, size, url, path, uploading }, prependRow){
+  function fmtTimeLeft(expiresAt){
+    const ms = expiresAt - Date.now();
+    if(ms <= 0) return 'expire...';
+    const min = Math.ceil(ms / 60000);
+    if(min < 60) return 'expire dans ' + min + ' min';
+    return 'expire dans ' + Math.ceil(min / 60) + 'h';
+  }
+
+  function addCloudFileRow({ name, size, url, path, uploading, expiresAt }, prependRow){
     const row = document.createElement('div');
     row.className = 'cloud-file';
+    const expiryText = expiresAt ? (' · ' + fmtTimeLeft(expiresAt)) : '';
     row.innerHTML =
       '<div class="info"><div class="fname">' + escapeHtml(name) + '</div>' +
-      '<div class="fmeta">' + fmtSize(size) + (uploading ? ' · envoi…' : '') + '</div></div>';
+      '<div class="fmeta">' + fmtSize(size) + (uploading ? ' · envoi…' : expiryText) + '</div></div>';
     if(!uploading && url){
       const a = document.createElement('a');
       a.className = 'dl';
