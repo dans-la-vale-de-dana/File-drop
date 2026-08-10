@@ -173,6 +173,12 @@
   .copy-btn:hover{border-color:var(--signal-dim);color:var(--signal);}
   .copy-btn:active{transform:scale(.96);}
 
+  .device-tag{
+    margin-top:10px;
+    font-size:12.5px;
+    color:var(--muted);
+  }
+
   /* ---------- Known devices ---------- */
   .known-list{
     display:flex;
@@ -553,6 +559,7 @@
         <div class="my-code-value" id="myCode">------</div>
         <button class="copy-btn" id="copyBtn">Copier</button>
       </div>
+      <div class="device-tag" id="myDeviceTag"></div>
     </div>
 
     <div class="panel" id="knownPanel" style="display:none;">
@@ -655,6 +662,7 @@
   const beacon = document.getElementById('beacon');
   const statusLine = document.getElementById('statusLine');
   const myCodeEl = document.getElementById('myCode');
+  const myDeviceTag = document.getElementById('myDeviceTag');
   const copyBtn = document.getElementById('copyBtn');
   const peerInput = document.getElementById('peerInput');
   const connectBtn = document.getElementById('connectBtn');
@@ -679,6 +687,83 @@
     if(bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' Ko';
     return (bytes/1024/1024).toFixed(1) + ' Mo';
   }
+
+  // ---- détection du type d'appareil (icône + libellé) ----
+  function detectDevice(){
+    const ua = navigator.userAgent || '';
+    const platform = navigator.platform || '';
+    const isTouch = navigator.maxTouchPoints > 1;
+
+    if(/iPad/.test(ua) || (platform === 'MacIntel' && isTouch)){
+      return { icon: '📱', label: 'iPad' };
+    }
+    if(/iPhone/.test(ua)){
+      return { icon: '📱', label: 'iPhone' };
+    }
+    if(/Android/.test(ua)){
+      const isTablet = !/Mobile/.test(ua);
+      const model = extractAndroidModel(ua);
+      const base = isTablet ? 'Tablette Android' : 'Téléphone Android';
+      return { icon: '📱', label: model ? (base + ' · ' + model) : base };
+    }
+    if(/Macintosh/.test(ua)){
+      return { icon: '💻', label: 'Mac' };
+    }
+    if(/CrOS/.test(ua)){
+      return { icon: '🖥️', label: 'Chromebook' };
+    }
+    if(/Windows/.test(ua)){
+      return { icon: '🖥️', label: detectWindowsVersion(ua) };
+    }
+    if(/Linux/.test(ua)){
+      return { icon: '🖥️', label: detectLinuxDetail(ua) };
+    }
+    if(/PlayStation/.test(ua)){
+      return { icon: '🎮', label: 'PlayStation' };
+    }
+    if(/Xbox/.test(ua)){
+      return { icon: '🎮', label: 'Xbox' };
+    }
+    if(/Nintendo/.test(ua)){
+      return { icon: '🎮', label: 'Nintendo Switch' };
+    }
+    return { icon: '💻', label: 'Appareil' };
+  }
+
+  // Windows ne distingue pas 10 et 11 dans le user-agent (les deux annoncent "NT 10.0"),
+  // donc on affiche "Windows 10/11" pour rester honnête plutôt que de deviner au hasard.
+  function detectWindowsVersion(ua){
+    const map = [
+      [/Windows NT 10\.0/, 'Windows 10/11'],
+      [/Windows NT 6\.3/, 'Windows 8.1'],
+      [/Windows NT 6\.2/, 'Windows 8'],
+      [/Windows NT 6\.1/, 'Windows 7'],
+    ];
+    for(const [re, label] of map){
+      if(re.test(ua)) return 'PC ' + label;
+    }
+    return 'PC Windows';
+  }
+
+  function detectLinuxDetail(ua){
+    let arch = '';
+    if(/x86_64|Linux x86_64/.test(ua)) arch = '64 bits';
+    else if(/aarch64|arm64/i.test(ua)) arch = 'ARM 64 bits';
+    else if(/i686|i386/.test(ua)) arch = '32 bits';
+    return arch ? ('PC Linux · ' + arch) : 'PC Linux';
+  }
+
+  // Extrait le code modèle depuis le user-agent Android, ex :
+  // "...Android 14; SM-A265F Build/UP1A..." -> "SM-A265F"
+  // C'est le code interne du fabricant, pas toujours le nom commercial affiché en boutique.
+  function extractAndroidModel(ua){
+    const match = ua.match(/Android\s[\d.]+;\s*([^;)]+?)(?:\s+Build\/|\))/);
+    if(!match) return null;
+    let model = match[1].trim();
+    if(!model || /^K$/i.test(model) || model.length < 2) return null;
+    return model;
+  }
+  const myDevice = detectDevice();
   function randomCode(){
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     let s = '';
@@ -705,18 +790,29 @@
   function saveKnownDevices(list){
     localStorage.setItem(STORAGE_KNOWN, JSON.stringify(list));
   }
-  function rememberDevice(code, label){
+  function rememberDevice(code, label, icon){
     const list = getKnownDevices();
     const existing = list.find(d => d.code === code);
     if(existing){
       existing.lastConnected = Date.now();
       if(label) existing.label = label;
+      if(icon) existing.icon = icon;
     } else {
-      list.push({ code, label: label || ('Appareil ' + code), lastConnected: Date.now() });
+      list.push({ code, label: label || ('Appareil ' + code), icon: icon || '💻', lastConnected: Date.now() });
     }
     list.sort((a,b) => b.lastConnected - a.lastConnected);
     saveKnownDevices(list);
     renderKnownDevices();
+  }
+  function rememberDeviceIcon(code, icon){
+    if(!icon) return;
+    const list = getKnownDevices();
+    const existing = list.find(d => d.code === code);
+    if(existing && existing.icon !== icon){
+      existing.icon = icon;
+      saveKnownDevices(list);
+      renderKnownDevices();
+    }
   }
   function forgetDevice(code){
     const list = getKnownDevices().filter(d => d.code !== code);
@@ -744,13 +840,17 @@
     for(const d of list){
       const item = document.createElement('div');
       item.className = 'known-item';
+      const icon = d.icon || '💻';
       item.innerHTML =
         '<span class="dot"></span>' +
-        '<div class="info"><div class="name">' + escapeHtml(d.label) + '</div>' +
+        '<div class="info"><div class="name">' + icon + ' ' + escapeHtml(d.label) + '</div>' +
         '<div class="meta">' + d.code + ' · ' + fmtLastSeen(d.lastConnected) + '</div></div>' +
         '<button class="reconnect">Relier</button>' +
         '<button class="remove" title="Oublier">✕</button>';
       item.querySelector('.reconnect').addEventListener('click', () => {
+        const icon = d.icon || '💻';
+        const ok = confirm('Voulez-vous vous connecter avec ' + icon + ' ' + d.label + ' ?');
+        if(!ok) return;
         peerInput.value = d.code;
         connectBtn.click();
       });
@@ -782,6 +882,7 @@
 
     peer.on('open', () => {
       myCodeEl.textContent = myCode;
+      myDeviceTag.textContent = myDevice.icon + ' ' + myDevice.label;
       setStatus('En attente d\'un appareil…');
     });
 
@@ -804,6 +905,22 @@
 
   function setupConnection(c){
     conn = c;
+    let remoteDevice = null; // rempli dès réception du message 'hello' de l'autre appareil
+    let deviceHandled = false;
+
+    function finalizeDeviceRemembering(remoteCode){
+      if(deviceHandled) return;
+      deviceHandled = true;
+      const known = getKnownDevices().find(d => d.code === remoteCode);
+      if(!known){
+        const suggested = remoteDevice ? remoteDevice.label : ('Appareil ' + remoteCode);
+        const label = prompt('Donner un nom à cet appareil (optionnel) :', suggested);
+        rememberDevice(remoteCode, label ? label.trim() : suggested, remoteDevice ? remoteDevice.icon : null);
+      } else {
+        rememberDevice(remoteCode, null, remoteDevice ? remoteDevice.icon : null);
+      }
+    }
+
     conn.on('open', () => {
       const remoteCode = conn.peer.replace('fd-','');
       currentPeerCode = remoteCode;
@@ -811,19 +928,19 @@
       if(conn.dataChannel){
         try { conn.dataChannel.binaryType = 'arraybuffer'; } catch(_e){}
       }
+      // On s'annonce à l'autre appareil (type + libellé détectés localement)
+      conn.send({ type: 'hello', icon: myDevice.icon, label: myDevice.label });
+
       beacon.classList.add('connected');
       setStatus('<span class="ok">Connecté à ' + remoteCode + '</span>');
       dropzone.classList.remove('disabled');
       dropHint.textContent = 'Le fichier sera envoyé directement à l\'appareil connecté';
       connectBtn.disabled = true;
       peerInput.disabled = true;
-      const known = getKnownDevices().find(d => d.code === remoteCode);
-      if(!known){
-        const label = prompt('Donner un nom à cet appareil (optionnel) :', 'Appareil ' + remoteCode);
-        rememberDevice(remoteCode, label ? label.trim() : null);
-      } else {
-        rememberDevice(remoteCode);
-      }
+
+      // On laisse une courte fenêtre pour recevoir le 'hello' de l'autre appareil
+      // avant de proposer un nom par défaut ; au-delà, on continue sans attendre.
+      setTimeout(() => finalizeDeviceRemembering(remoteCode), 900);
     });
 
     conn.on('close', () => resetConnection());
@@ -831,6 +948,15 @@
 
     let incoming = null;
     conn.on('data', async (data) => {
+      if(data && typeof data === 'object' && !(data instanceof ArrayBuffer) && !(data instanceof Blob) &&
+         !ArrayBuffer.isView(data) && data.type === 'hello'){
+        remoteDevice = { icon: data.icon, label: data.label };
+        setStatus('<span class="ok">Connecté à ' + (currentPeerCode || '') + ' (' + data.icon + ' ' + data.label + ')</span>');
+        const remoteCode = conn.peer.replace('fd-','');
+        rememberDeviceIcon(remoteCode, data.icon);
+        finalizeDeviceRemembering(remoteCode);
+        return;
+      }
       if(data && typeof data === 'object' && !(data instanceof ArrayBuffer) && !(data instanceof Blob) &&
          !ArrayBuffer.isView(data) && data.type === 'meta'){
         incoming = {
