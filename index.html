@@ -2071,6 +2071,12 @@
       : 'Activer le pont vers Discord';
   }
 
+  // Détecte si un texte contient un lien direct vers une image (jpg/png/gif/webp...)
+  function extractImageUrl(text){
+    const match = text.match(/https?:\/\/\S+\.(?:png|jpe?g|gif|webp)(?:\?\S*)?/i);
+    return match ? match[0] : null;
+  }
+
   function startDiscordBridge(){
     if(!sb || discordChannel) return;
     discordChannel = sb
@@ -2079,7 +2085,16 @@
         { event: 'INSERT', schema: 'public', table: 'bridge_messages', filter: 'source=eq.discord' },
         (payload) => {
           const row = payload.new;
-          addChatMessage('🔗 ' + row.author + ' (Discord)', row.text, false);
+          const senderLabel = '🔗 ' + row.author + ' (Discord)';
+          const imageUrl = extractImageUrl(row.text || '');
+          if(imageUrl){
+            addChatImage(senderLabel, imageUrl, false);
+            // S'il y avait aussi du texte à côté du lien, on l'affiche en plus
+            const remainingText = row.text.replace(imageUrl, '').trim();
+            if(remainingText) addChatMessage(senderLabel, remainingText, false);
+          } else {
+            addChatMessage(senderLabel, row.text, false);
+          }
         }
       )
       .subscribe();
@@ -2100,6 +2115,7 @@
     discordBridgeEnabled = !discordBridgeEnabled;
     localStorage.setItem('filedrop_discord_bridge', discordBridgeEnabled ? '1' : '0');
     updateDiscordToggleUI();
+    updateChatAvailability();
     if(discordBridgeEnabled) startDiscordBridge(); else stopDiscordBridge();
   });
 
@@ -2316,4 +2332,3 @@
 
 </body>
 </html>
-
