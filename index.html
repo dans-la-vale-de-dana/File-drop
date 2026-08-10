@@ -424,6 +424,34 @@
   }
   .chat-msg.sticker .sender{margin-bottom:1px;}
 
+  .chat-msg .chat-img{
+    max-width:220px;
+    max-height:220px;
+    border-radius:10px;
+    display:block;
+    margin-top:2px;
+    cursor:pointer;
+  }
+  .chat-msg.image-msg{
+    background:transparent;
+    border:none;
+    padding:2px 4px;
+    max-width:230px;
+  }
+  .chat-msg.image-msg.other .chat-img{border:1px solid var(--line);}
+
+  .emoji-toggle-btn{
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    border-radius:8px;
+    font-size:18px;
+    padding:0 10px;
+    cursor:pointer;
+    flex-shrink:0;
+  }
+  .emoji-toggle-btn:hover{border-color:var(--signal-dim);}
+  .emoji-toggle-btn:disabled{opacity:.4;cursor:not-allowed;}
+
   .chat-row{
     display:flex;
     gap:10px;
@@ -1024,6 +1052,8 @@
     <div class="emoji-picker" id="emojiPicker" style="display:none;"></div>
     <div class="chat-log" id="chatLog"></div>
     <div class="chat-row">
+      <button class="emoji-toggle-btn" id="chatPhotoBtn" disabled title="Envoyer une photo">📷</button>
+      <input type="file" id="chatPhotoInput" accept="image/*" style="display:none;">
       <input type="text" id="chatInput" placeholder="Écrire un message…" maxlength="500" disabled>
       <button class="primary" id="chatSendBtn" disabled>Envoyer</button>
     </div>
@@ -1048,6 +1078,8 @@
   const chatLog = document.getElementById('chatLog');
   const chatInput = document.getElementById('chatInput');
   const chatSendBtn = document.getElementById('chatSendBtn');
+  const chatPhotoBtn = document.getElementById('chatPhotoBtn');
+  const chatPhotoInput = document.getElementById('chatPhotoInput');
   const groupFileInput = document.getElementById('groupFileInput');
   const emojiToggleBtn = document.getElementById('emojiToggleBtn');
   const emojiPicker = document.getElementById('emojiPicker');
@@ -1488,11 +1520,26 @@
       if(data && typeof data === 'object' && !(data instanceof ArrayBuffer) && !(data instanceof Blob) &&
          !ArrayBuffer.isView(data) && data.type === 'meta'){
         incoming = {
+          kind: 'file',
           name: data.name,
           size: data.size,
           received: 0,
           chunks: [],
           logItem: addLogItem(data.name, data.size, 'in')
+        };
+        return;
+      }
+      if(data && typeof data === 'object' && !(data instanceof ArrayBuffer) && !(data instanceof Blob) &&
+         !ArrayBuffer.isView(data) && data.type === 'chat-image-meta'){
+        const entry = activeConnections.get(remoteCode);
+        const senderLabel = (entry && entry.device) ? (entry.device.icon + ' ' + entry.device.label) : remoteCode;
+        incoming = {
+          kind: 'image',
+          name: data.name,
+          size: data.size,
+          received: 0,
+          chunks: [],
+          senderLabel: senderLabel
         };
         return;
       }
@@ -1513,9 +1560,17 @@
 
       incoming.chunks.push(chunk);
       incoming.received += chunk.byteLength;
-      updateLogItem(incoming.logItem, incoming.received / incoming.size);
+      if(incoming.kind === 'file'){
+        updateLogItem(incoming.logItem, incoming.received / incoming.size);
+      }
       if(incoming.received >= incoming.size){
-        finishReceiving(incoming);
+        if(incoming.kind === 'file'){
+          finishReceiving(incoming);
+        } else {
+          const blob = new Blob(incoming.chunks);
+          const url = URL.createObjectURL(blob);
+          addChatImage(incoming.senderLabel, url, false);
+        }
         incoming = null;
       }
     });
@@ -1582,11 +1637,13 @@
 
   // Le champ de saisie est utilisable dès qu'il y a un appareil connecté
   // en direct OU que le pont Discord est actif (les deux sont indépendants).
+  // La photo, elle, ne passe que par la connexion directe (pas via Discord).
   function updateChatAvailability(){
     const available = activeConnections.size > 0 || discordBridgeEnabled;
     chatInput.disabled = !available;
     chatSendBtn.disabled = !available;
     emojiToggleBtn.disabled = !available;
+    chatPhotoBtn.disabled = activeConnections.size === 0;
   }
 
   // Emoji/stickers : liste courante pour le sélecteur rapide
@@ -1827,6 +1884,72 @@
         resolve(false);
       }
     });
+  }
+
+  // ---- Envoi de photo directement dans la discussion ----
+  chatPhotoBtn.addEventListener('click', () => {
+    if(activeConnections.size === 0) return;
+    chatPhotoInput.click();
+  });
+
+  chatPhotoInput.addEventListener('change', () => {
+    const file = chatPhotoInput.files[0];
+    chatPhotoInput.value = '';
+    if(file) sendChatImage(file);
+  });
+
+  async function sendChatImage(file){
+    const entries = [...activeConnections.values()];
+    const recipients = entries.map(e => e.conn).filter(c => c && c.open);
+    if(recipients.length === 0) return;
+
+    // Affichage immédiat de la miniature envoyée, côté expéditeur
+    const localUrl = URL.createObjectURL(file);
+    addChatImage('Moi', localUrl, true);
+
+    for(const conn of recipients){
+      try {
+        conn.send({ type: 'chat-image-meta', name: file.name, size: file.size });
+        const dc = conn.dataChannel;
+        const BUFFER_LIMIT = 4 * 1024 * 1024;
+        let offset = 0;
+        while(offset < file.size){
+          if(dc && dc.bufferedAmount > BUFFER_LIMIT){
+            await new Promise(r => {
+              const check = () => {
+                if(!dc || dc.bufferedAmount <= BUFFER_LIMIT) r();
+                else requestAnimationFrame(check);
+              };
+              check();
+            });
+          }
+          const slice = file.slice(offset, offset + CHUNK_SIZE);
+          const buffer = await slice.arrayBuffer();
+          conn.send(buffer);
+          offset += buffer.byteLength;
+        }
+      } catch(_e){}
+    }
+  }
+
+  function addChatImage(senderLabel, url, isMe){
+    const msg = document.createElement('div');
+    msg.className = 'chat-msg image-msg ' + (isMe ? 'me' : 'other');
+    msg.innerHTML =
+      '<div class="sender">' + (isMe ? 'Moi' : escapeHtml(senderLabel)) + '</div>';
+    const img = document.createElement('img');
+    img.className = 'chat-img';
+    img.src = url;
+    img.addEventListener('click', () => window.open(url, '_blank'));
+    msg.appendChild(img);
+    chatLog.appendChild(msg);
+    chatLog.scrollTop = chatLog.scrollHeight;
+
+    if(!isMe && chatFloating.style.display === 'none'){
+      unreadCount++;
+      chatFabBadge.textContent = unreadCount > 9 ? '9+' : String(unreadCount);
+      chatFabBadge.style.display = 'flex';
+    }
   }
 
   function addLogItem(name, size, direction){
@@ -2193,3 +2316,4 @@
 
 </body>
 </html>
+
