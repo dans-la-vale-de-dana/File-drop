@@ -371,6 +371,66 @@
   }
   .connected-badge .x:hover{opacity:1;}
 
+  /* ---------- Chat ---------- */
+  .chat-log{
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    max-height:260px;
+    overflow-y:auto;
+    margin-bottom:12px;
+  }
+  .chat-log:empty::after{
+    content:"Aucun message pour l'instant.";
+    color:var(--muted);
+    font-size:13px;
+  }
+  .chat-msg{
+    max-width:80%;
+    padding:9px 13px;
+    border-radius:12px;
+    font-size:13.5px;
+    line-height:1.4;
+    word-break:break-word;
+  }
+  .chat-msg .sender{
+    font-size:11px;
+    color:var(--muted);
+    margin-bottom:3px;
+  }
+  .chat-msg.me{
+    align-self:flex-end;
+    background:var(--signal);
+    color:#06231D;
+    border-bottom-right-radius:3px;
+  }
+  .chat-msg.me .sender{ color:rgba(6,35,29,.6); }
+  .chat-msg.other{
+    align-self:flex-start;
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    color:var(--text);
+    border-bottom-left-radius:3px;
+  }
+  .chat-row{
+    display:flex;
+    gap:10px;
+  }
+  .chat-row input[type=text]{
+    flex:1;
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    color:var(--text);
+    border-radius:8px;
+    padding:11px 13px;
+    font-size:14px;
+    font-family:inherit;
+    outline:none;
+  }
+  .chat-row input[type=text]:focus{border-color:var(--signal);}
+  .chat-row input[type=text]:disabled{opacity:.5;}
+  .chat-row button:disabled{opacity:.4;cursor:not-allowed;}
+
   .connect-row{
     display:flex;
     gap:10px;
@@ -691,6 +751,7 @@
   </div>
 
   <div class="tab-content active" id="tabDirect">
+    <input type="file" id="groupFileInput" multiple style="display:none;">
 
     <div class="panel">
       <div class="panel-label">Mon code</div>
@@ -739,6 +800,15 @@
         <div class="hint" id="dropHint">Connecte-toi d'abord à un appareil</div>
         <input type="file" id="fileInput" multiple>
       </label>
+    </div>
+
+    <div class="panel">
+      <div class="panel-label">Discussion</div>
+      <div class="chat-log" id="chatLog"></div>
+      <div class="chat-row">
+        <input type="text" id="chatInput" placeholder="Écrire un message…" maxlength="500" disabled>
+        <button class="primary" id="chatSendBtn" disabled>Envoyer</button>
+      </div>
     </div>
 
     <div class="panel">
@@ -829,6 +899,11 @@
   const knownPanel = document.getElementById('knownPanel');
   const knownList = document.getElementById('knownList');
   const connectedBadges = document.getElementById('connectedBadges');
+  const chatLog = document.getElementById('chatLog');
+  const chatInput = document.getElementById('chatInput');
+  const chatSendBtn = document.getElementById('chatSendBtn');
+  const groupFileInput = document.getElementById('groupFileInput');
+  let groupFileTarget = null;
   const groupsPanel = document.getElementById('groupsPanel');
   const groupList = document.getElementById('groupList');
   const newGroupBtn = document.getElementById('newGroupBtn');
@@ -1066,11 +1141,32 @@
       const item = document.createElement('div');
       item.className = 'group-item';
       const memberNames = members.map(m => (m.icon || '💻') + ' ' + m.label).join(', ') || 'Aucun membre connu';
+      const connectedCount = g.codes.filter(code => activeConnections.has(code)).length;
+      const connMeta = connectedCount > 0
+        ? ' · <span style="color:var(--signal);">' + connectedCount + '/' + g.codes.length + ' connecté(s)</span>'
+        : '';
       item.innerHTML =
         '<div class="grow-top"><span class="gname">👥 ' + escapeHtml(g.name) + '</span></div>' +
-        '<div class="gmeta">' + members.length + ' appareil(s) · ' + escapeHtml(memberNames) + '</div>' +
-        '<div class="gactions"><button class="gconnect">Relier au groupe</button><button class="remove">✕</button></div>';
+        '<div class="gmeta">' + members.length + ' appareil(s) · ' + escapeHtml(memberNames) + connMeta + '</div>' +
+        '<div class="gactions">' +
+          '<button class="gconnect">Relier</button>' +
+          '<button class="gsendfile"' + (connectedCount === 0 ? ' disabled' : '') + '>📤 Fichier</button>' +
+          '<button class="gsendchat"' + (connectedCount === 0 ? ' disabled' : '') + '>💬 Message</button>' +
+          '<button class="remove">✕</button>' +
+        '</div>';
       item.querySelector('.gconnect').addEventListener('click', () => connectToGroup(g));
+      item.querySelector('.gsendfile').addEventListener('click', () => {
+        const codesConnected = g.codes.filter(code => activeConnections.has(code));
+        if(codesConnected.length === 0) return;
+        groupFileTarget = codesConnected;
+        groupFileInput.click();
+      });
+      item.querySelector('.gsendchat').addEventListener('click', () => {
+        const codesConnected = g.codes.filter(code => activeConnections.has(code));
+        if(codesConnected.length === 0) return;
+        const text = prompt('Message pour le groupe "' + g.name + '" :');
+        if(text && text.trim()) sendChatMessage(text.trim(), codesConnected);
+      });
       item.querySelector('.remove').addEventListener('click', () => {
         if(!confirm('Supprimer le groupe "' + g.name + '" ?')) return;
         saveGroups(getGroups().filter(x => x.id !== g.id));
@@ -1229,6 +1325,14 @@
         return;
       }
       if(data && typeof data === 'object' && !(data instanceof ArrayBuffer) && !(data instanceof Blob) &&
+         !ArrayBuffer.isView(data) && data.type === 'chat'){
+        const entry = activeConnections.get(remoteCode);
+        const senderLabel = (data.icon || (entry && entry.device ? entry.device.icon : '💻')) + ' ' +
+                             (data.label || (entry && entry.device ? entry.device.label : remoteCode));
+        addChatMessage(senderLabel, data.text, false);
+        return;
+      }
+      if(data && typeof data === 'object' && !(data instanceof ArrayBuffer) && !(data instanceof Blob) &&
          !ArrayBuffer.isView(data) && data.type === 'meta'){
         incoming = {
           name: data.name,
@@ -1283,6 +1387,8 @@
       setStatus('En attente d\'un appareil…');
       dropzone.classList.add('disabled');
       dropHint.textContent = 'Connecte-toi d\'abord à un appareil';
+      chatInput.disabled = true;
+      chatSendBtn.disabled = true;
     } else {
       beacon.classList.add('connected');
       // Si toutes les connexions actives partagent le même nom de groupe, on l'affiche
@@ -1299,6 +1405,8 @@
       dropHint.textContent = count === 1
         ? 'Le fichier sera envoyé directement à l\'appareil connecté'
         : 'Le fichier sera envoyé aux ' + count + ' appareils connectés';
+      chatInput.disabled = false;
+      chatSendBtn.disabled = false;
     }
 
     connectedBadges.innerHTML = '';
@@ -1315,7 +1423,41 @@
       });
       connectedBadges.appendChild(badge);
     }
+
+    renderGroups();
   }
+
+  // ---- discussion ----
+  function addChatMessage(senderLabel, text, isMe){
+    const msg = document.createElement('div');
+    msg.className = 'chat-msg ' + (isMe ? 'me' : 'other');
+    msg.innerHTML =
+      '<div class="sender">' + (isMe ? 'Moi' : escapeHtml(senderLabel)) + '</div>' +
+      '<div class="text"></div>';
+    msg.querySelector('.text').textContent = text; // évite toute injection HTML
+    chatLog.appendChild(msg);
+    chatLog.scrollTop = chatLog.scrollHeight;
+  }
+
+  function sendChatMessage(text, targetCodes){
+    text = text !== undefined ? text : chatInput.value.trim();
+    if(!text) return;
+    const entries = targetCodes
+      ? targetCodes.map(code => activeConnections.get(code)).filter(Boolean)
+      : [...activeConnections.values()];
+    const recipients = entries.map(e => e.conn).filter(c => c && c.open);
+    if(recipients.length === 0) return;
+    for(const c of recipients){
+      try { c.send({ type: 'chat', text, icon: myDevice.icon, label: myDevice.label }); } catch(_e){}
+    }
+    addChatMessage('Moi', text, true);
+    if(targetCodes === undefined || targetCodes === null) chatInput.value = '';
+  }
+
+  chatSendBtn.addEventListener('click', () => sendChatMessage());
+  chatInput.addEventListener('keydown', (e) => {
+    if(e.key === 'Enter') sendChatMessage();
+  });
 
   connectBtn.addEventListener('click', () => {
     const code = peerInput.value.trim().toUpperCase();
@@ -1354,6 +1496,13 @@
     if(fileInput.files.length) queueFiles(fileInput.files);
     fileInput.value = '';
   });
+  groupFileInput.addEventListener('change', () => {
+    if(groupFileInput.files.length && groupFileTarget){
+      queueFiles(groupFileInput.files, groupFileTarget);
+    }
+    groupFileInput.value = '';
+    groupFileTarget = null;
+  });
   ['dragover','dragenter'].forEach(evt => {
     dropzone.addEventListener(evt, (e) => {
       e.preventDefault();
@@ -1375,23 +1524,26 @@
   const sendQueue = [];
   let sending = false;
 
-  function queueFiles(fileList){
-    for(const f of fileList) sendQueue.push(f);
+  function queueFiles(fileList, targetCodes){
+    for(const f of fileList) sendQueue.push({ file: f, targetCodes: targetCodes || null });
     processQueue();
   }
 
   function processQueue(){
     if(sending || sendQueue.length === 0) return;
     sending = true;
-    const file = sendQueue.shift();
-    sendFile(file, () => {
+    const item = sendQueue.shift();
+    sendFile(item.file, () => {
       sending = false;
       processQueue();
-    });
+    }, item.targetCodes);
   }
 
-  async function sendFile(file, onFinished){
-    const recipients = [...activeConnections.values()].map(e => e.conn).filter(c => c && c.open);
+  async function sendFile(file, onFinished, targetCodes){
+    const entries = targetCodes
+      ? targetCodes.map(code => activeConnections.get(code)).filter(Boolean)
+      : [...activeConnections.values()];
+    const recipients = entries.map(e => e.conn).filter(c => c && c.open);
     if(recipients.length === 0){ onFinished(); return; }
 
     const label = recipients.length === 1 ? file.name : (file.name + ' → ' + recipients.length + ' appareils');
