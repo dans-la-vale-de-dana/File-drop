@@ -233,6 +233,144 @@
   }
   .known-item .remove:hover{color:var(--danger);}
 
+  /* ---------- Groups ---------- */
+  .panel-label{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+  }
+  .mini-btn{
+    background:transparent;
+    border:1px solid var(--signal-dim);
+    color:var(--signal);
+    border-radius:7px;
+    padding:4px 10px;
+    font-size:11px;
+    cursor:pointer;
+    font-family:inherit;
+    text-transform:none;
+    letter-spacing:normal;
+  }
+  .mini-btn:hover{border-color:var(--signal);}
+  .group-list{
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+  }
+  .group-item{
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:12px;
+  }
+  .group-item .grow-top{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    margin-bottom:6px;
+  }
+  .group-item .gname{
+    font-size:14px;
+    color:var(--text);
+    font-weight:600;
+    flex:1;
+  }
+  .group-item .gmeta{
+    font-size:11.5px;
+    color:var(--muted);
+    margin-bottom:8px;
+  }
+  .group-item .gactions{
+    display:flex;
+    gap:8px;
+  }
+  .group-item .gactions button{
+    background:transparent;
+    border:1px solid var(--line);
+    color:var(--signal);
+    border-radius:7px;
+    padding:7px 12px;
+    font-size:12px;
+    cursor:pointer;
+    font-family:inherit;
+    flex:1;
+  }
+  .group-item .gactions button:hover{border-color:var(--signal);}
+  .group-item .gactions button.remove{color:var(--muted);flex:0;padding:7px 10px;}
+  .group-item .gactions button.remove:hover{color:var(--danger);border-color:var(--danger);}
+
+  #groupCreateBox{
+    margin-top:14px;
+    padding-top:14px;
+    border-top:1px solid var(--line);
+  }
+  .group-checklist{
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    margin-bottom:12px;
+    max-height:220px;
+    overflow-y:auto;
+  }
+  .group-check-item{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    border-radius:8px;
+    padding:9px 12px;
+    font-size:13px;
+    color:var(--text);
+    cursor:pointer;
+  }
+  .group-check-item input[type=checkbox]{
+    width:16px;height:16px;
+    accent-color:var(--signal);
+  }
+  #groupNameInput{
+    width:100%;
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    color:var(--text);
+    border-radius:8px;
+    padding:11px 13px;
+    font-size:14px;
+    font-family:inherit;
+    outline:none;
+    margin-bottom:10px;
+  }
+  #groupNameInput:focus{border-color:var(--signal);}
+  .group-create-actions{
+    display:flex;
+    gap:10px;
+  }
+  .group-create-actions button{flex:1;}
+
+  .connected-badges{
+    display:flex;
+    flex-wrap:wrap;
+    gap:6px;
+    margin-top:10px;
+  }
+  .connected-badge{
+    display:flex;
+    align-items:center;
+    gap:6px;
+    background:rgba(94,234,212,.1);
+    border:1px solid var(--signal-dim);
+    color:var(--signal);
+    border-radius:999px;
+    padding:5px 11px 5px 9px;
+    font-size:12px;
+  }
+  .connected-badge .x{
+    cursor:pointer;
+    opacity:.7;
+    font-size:13px;
+  }
+  .connected-badge .x:hover{opacity:1;}
+
   .connect-row{
     display:flex;
     gap:10px;
@@ -545,6 +683,7 @@
     <div class="beacon-core" id="beaconCore">📡</div>
   </div>
   <div class="status-line" id="statusLine">Initialisation…</div>
+  <div class="connected-badges" id="connectedBadges"></div>
 
   <div class="tabs">
     <button class="tab-btn active" data-tab="direct">Envoi direct</button>
@@ -565,6 +704,23 @@
     <div class="panel" id="knownPanel" style="display:none;">
       <div class="panel-label">Appareils connus</div>
       <div class="known-list" id="knownList"></div>
+    </div>
+
+    <div class="panel" id="groupsPanel" style="display:none;">
+      <div class="panel-label">
+        Groupes
+        <button class="mini-btn" id="newGroupBtn">＋ Nouveau</button>
+      </div>
+      <div class="group-list" id="groupList"></div>
+
+      <div id="groupCreateBox" style="display:none;">
+        <div class="group-checklist" id="groupChecklist"></div>
+        <input type="text" id="groupNameInput" placeholder="Nom du groupe (ex: Famille)" maxlength="40">
+        <div class="group-create-actions">
+          <button class="primary" id="groupCreateConfirm">Créer le groupe</button>
+          <button class="btn-secondary" id="groupCreateCancel">Annuler</button>
+        </div>
+      </div>
     </div>
 
     <div class="panel">
@@ -672,14 +828,23 @@
   const logEl = document.getElementById('log');
   const knownPanel = document.getElementById('knownPanel');
   const knownList = document.getElementById('knownList');
+  const connectedBadges = document.getElementById('connectedBadges');
+  const groupsPanel = document.getElementById('groupsPanel');
+  const groupList = document.getElementById('groupList');
+  const newGroupBtn = document.getElementById('newGroupBtn');
+  const groupCreateBox = document.getElementById('groupCreateBox');
+  const groupChecklist = document.getElementById('groupChecklist');
+  const groupNameInput = document.getElementById('groupNameInput');
+  const groupCreateConfirm = document.getElementById('groupCreateConfirm');
+  const groupCreateCancel = document.getElementById('groupCreateCancel');
 
   const CHUNK_SIZE = 64 * 1024;
   const STORAGE_MY_CODE = 'filedrop_my_code';
   const STORAGE_KNOWN = 'filedrop_known_devices';
+  const STORAGE_GROUPS = 'filedrop_groups';
   let peer = null;
-  let conn = null;
+  const activeConnections = new Map(); // code -> { conn, device: {icon,label} }
   let myCode = '';
-  let currentPeerCode = null;
 
   function setStatus(html){ statusLine.innerHTML = html; }
   function fmtSize(bytes){
@@ -803,6 +968,7 @@
     list.sort((a,b) => b.lastConnected - a.lastConnected);
     saveKnownDevices(list);
     renderKnownDevices();
+    renderGroups();
   }
   function rememberDeviceIcon(code, icon){
     if(!icon) return;
@@ -817,7 +983,11 @@
   function forgetDevice(code){
     const list = getKnownDevices().filter(d => d.code !== code);
     saveKnownDevices(list);
+    // Retire aussi cet appareil de tous les groupes existants
+    const groups = getGroups().map(g => ({ ...g, codes: g.codes.filter(c => c !== code) }));
+    saveGroups(groups);
     renderKnownDevices();
+    renderGroups();
   }
   function fmtLastSeen(ts){
     const diff = Date.now() - ts;
@@ -849,15 +1019,116 @@
         '<button class="remove" title="Oublier">✕</button>';
       item.querySelector('.reconnect').addEventListener('click', () => {
         const icon = d.icon || '💻';
+        if(activeConnections.has(d.code)){
+          setStatus('<span class="err">Déjà connecté à cet appareil</span>');
+          return;
+        }
         const ok = confirm('Voulez-vous vous connecter avec ' + icon + ' ' + d.label + ' ?');
         if(!ok) return;
-        peerInput.value = d.code;
-        connectBtn.click();
+        connectToCode(d.code);
       });
       item.querySelector('.remove').addEventListener('click', () => forgetDevice(d.code));
       knownList.appendChild(item);
     }
   }
+
+  // ============================================================
+  //  Groupes : ensembles nommés d'appareils connus, pour se
+  //  connecter et envoyer des fichiers à plusieurs d'un coup.
+  // ============================================================
+
+  function getGroups(){
+    try{ return JSON.parse(localStorage.getItem(STORAGE_GROUPS) || '[]'); }
+    catch(e){ return []; }
+  }
+  function saveGroups(list){
+    localStorage.setItem(STORAGE_GROUPS, JSON.stringify(list));
+  }
+  function renderGroups(){
+    const groups = getGroups();
+    const known = getKnownDevices();
+    if(known.length === 0 && groups.length === 0){
+      groupsPanel.style.display = 'none';
+      return;
+    }
+    groupsPanel.style.display = 'block';
+    groupList.innerHTML = '';
+    if(groups.length === 0){
+      const empty = document.createElement('div');
+      empty.style.cssText = 'color:var(--muted);font-size:13px;';
+      empty.textContent = 'Aucun groupe pour l\'instant.';
+      groupList.appendChild(empty);
+    }
+    for(const g of groups){
+      const members = g.codes
+        .map(code => known.find(d => d.code === code))
+        .filter(Boolean);
+      const item = document.createElement('div');
+      item.className = 'group-item';
+      const memberNames = members.map(m => (m.icon || '💻') + ' ' + m.label).join(', ') || 'Aucun membre connu';
+      item.innerHTML =
+        '<div class="grow-top"><span class="gname">👥 ' + escapeHtml(g.name) + '</span></div>' +
+        '<div class="gmeta">' + members.length + ' appareil(s) · ' + escapeHtml(memberNames) + '</div>' +
+        '<div class="gactions"><button class="gconnect">Relier au groupe</button><button class="remove">✕</button></div>';
+      item.querySelector('.gconnect').addEventListener('click', () => connectToGroup(g));
+      item.querySelector('.remove').addEventListener('click', () => {
+        if(!confirm('Supprimer le groupe "' + g.name + '" ?')) return;
+        saveGroups(getGroups().filter(x => x.id !== g.id));
+        renderGroups();
+      });
+      groupList.appendChild(item);
+    }
+  }
+
+  function connectToGroup(group){
+    let connected = 0, skipped = 0;
+    for(const code of group.codes){
+      if(activeConnections.has(code)){ skipped++; continue; }
+      connectToCode(code);
+      connected++;
+    }
+    if(connected === 0 && skipped > 0){
+      setStatus('<span class="ok">Déjà connecté à tous les membres de "' + group.name + '"</span>');
+    } else {
+      setStatus('Connexion au groupe "' + group.name + '"…');
+    }
+  }
+
+  newGroupBtn.addEventListener('click', () => {
+    const known = getKnownDevices();
+    if(known.length === 0){
+      alert('Connecte-toi au moins une fois à un appareil avant de créer un groupe.');
+      return;
+    }
+    groupChecklist.innerHTML = '';
+    for(const d of known){
+      const row = document.createElement('label');
+      row.className = 'group-check-item';
+      row.innerHTML =
+        '<input type="checkbox" value="' + d.code + '"> ' +
+        (d.icon || '💻') + ' ' + escapeHtml(d.label) + ' <span style="color:var(--muted);font-size:11px;">(' + d.code + ')</span>';
+      groupChecklist.appendChild(row);
+    }
+    groupNameInput.value = '';
+    groupCreateBox.style.display = 'block';
+    groupsPanel.style.display = 'block';
+  });
+
+  groupCreateCancel.addEventListener('click', () => {
+    groupCreateBox.style.display = 'none';
+  });
+
+  groupCreateConfirm.addEventListener('click', () => {
+    const name = groupNameInput.value.trim();
+    if(!name){ alert('Donne un nom au groupe.'); return; }
+    const checked = [...groupChecklist.querySelectorAll('input[type=checkbox]:checked')].map(cb => cb.value);
+    if(checked.length === 0){ alert('Sélectionne au moins un appareil.'); return; }
+    const groups = getGroups();
+    groups.push({ id: 'g' + Date.now(), name, codes: checked });
+    saveGroups(groups);
+    groupCreateBox.style.display = 'none';
+    renderGroups();
+  });
 
   function initPeer(){
     myCode = getOrCreateMyCode();
@@ -904,11 +1175,11 @@
   }
 
   function setupConnection(c){
-    conn = c;
     let remoteDevice = null; // rempli dès réception du message 'hello' de l'autre appareil
     let deviceHandled = false;
+    let remoteCode = c.peer.replace('fd-','');
 
-    function finalizeDeviceRemembering(remoteCode){
+    function finalizeDeviceRemembering(){
       if(deviceHandled) return;
       deviceHandled = true;
       const known = getKnownDevices().find(d => d.code === remoteCode);
@@ -921,40 +1192,36 @@
       }
     }
 
-    conn.on('open', () => {
-      const remoteCode = conn.peer.replace('fd-','');
-      currentPeerCode = remoteCode;
-      // Force un format binaire cohérent des deux côtés, quel que soit le navigateur
-      if(conn.dataChannel){
-        try { conn.dataChannel.binaryType = 'arraybuffer'; } catch(_e){}
+    c.on('open', () => {
+      // Évite les doublons si on essaie de se relier à un appareil déjà connecté
+      if(activeConnections.has(remoteCode)){
+        try { c.close(); } catch(_e){}
+        return;
       }
-      // On s'annonce à l'autre appareil (type + libellé détectés localement)
-      conn.send({ type: 'hello', icon: myDevice.icon, label: myDevice.label });
+      if(c.dataChannel){
+        try { c.dataChannel.binaryType = 'arraybuffer'; } catch(_e){}
+      }
+      c.send({ type: 'hello', icon: myDevice.icon, label: myDevice.label });
 
-      beacon.classList.add('connected');
-      setStatus('<span class="ok">Connecté à ' + remoteCode + '</span>');
-      dropzone.classList.remove('disabled');
-      dropHint.textContent = 'Le fichier sera envoyé directement à l\'appareil connecté';
-      connectBtn.disabled = true;
-      peerInput.disabled = true;
+      activeConnections.set(remoteCode, { conn: c, device: null });
+      refreshConnectionUI();
 
-      // On laisse une courte fenêtre pour recevoir le 'hello' de l'autre appareil
-      // avant de proposer un nom par défaut ; au-delà, on continue sans attendre.
-      setTimeout(() => finalizeDeviceRemembering(remoteCode), 900);
+      setTimeout(() => finalizeDeviceRemembering(), 900);
     });
 
-    conn.on('close', () => resetConnection());
-    conn.on('error', () => resetConnection());
+    c.on('close', () => removeConnection(remoteCode));
+    c.on('error', () => removeConnection(remoteCode));
 
     let incoming = null;
-    conn.on('data', async (data) => {
+    c.on('data', async (data) => {
       if(data && typeof data === 'object' && !(data instanceof ArrayBuffer) && !(data instanceof Blob) &&
          !ArrayBuffer.isView(data) && data.type === 'hello'){
         remoteDevice = { icon: data.icon, label: data.label };
-        setStatus('<span class="ok">Connecté à ' + (currentPeerCode || '') + ' (' + data.icon + ' ' + data.label + ')</span>');
-        const remoteCode = conn.peer.replace('fd-','');
+        const entry = activeConnections.get(remoteCode);
+        if(entry) entry.device = remoteDevice;
+        refreshConnectionUI();
         rememberDeviceIcon(remoteCode, data.icon);
-        finalizeDeviceRemembering(remoteCode);
+        finalizeDeviceRemembering();
         return;
       }
       if(data && typeof data === 'object' && !(data instanceof ArrayBuffer) && !(data instanceof Blob) &&
@@ -999,23 +1266,64 @@
     showDownloadButton(incoming.logItem, url, incoming.name);
   }
 
-  function resetConnection(){
-    conn = null;
-    beacon.classList.remove('connected');
-    setStatus('Déconnecté. En attente d\'un appareil…');
-    dropzone.classList.add('disabled');
-    dropHint.textContent = 'Connecte-toi d\'abord à un appareil';
-    connectBtn.disabled = false;
-    peerInput.disabled = false;
+  function removeConnection(code){
+    activeConnections.delete(code);
+    refreshConnectionUI();
+  }
+
+  // Met à jour tout l'affichage lié aux connexions actives (badges, statut, dropzone)
+  function refreshConnectionUI(){
+    const count = activeConnections.size;
+    if(count === 0){
+      beacon.classList.remove('connected');
+      setStatus('En attente d\'un appareil…');
+      dropzone.classList.add('disabled');
+      dropHint.textContent = 'Connecte-toi d\'abord à un appareil';
+    } else {
+      beacon.classList.add('connected');
+      if(count === 1){
+        const only = [...activeConnections.values()][0];
+        const dev = only.device ? (only.device.icon + ' ' + only.device.label) : '';
+        setStatus('<span class="ok">Connecté' + (dev ? ' à ' + dev : '') + '</span>');
+      } else {
+        setStatus('<span class="ok">Connecté à ' + count + ' appareils</span>');
+      }
+      dropzone.classList.remove('disabled');
+      dropHint.textContent = count === 1
+        ? 'Le fichier sera envoyé directement à l\'appareil connecté'
+        : 'Le fichier sera envoyé aux ' + count + ' appareils connectés';
+    }
+
+    connectedBadges.innerHTML = '';
+    for(const [code, entry] of activeConnections){
+      const badge = document.createElement('div');
+      badge.className = 'connected-badge';
+      const icon = entry.device ? entry.device.icon : '💻';
+      const label = entry.device ? entry.device.label : code;
+      badge.innerHTML = '<span>' + icon + ' ' + escapeHtml(label) + '</span><span class="x">✕</span>';
+      badge.querySelector('.x').addEventListener('click', () => {
+        try { entry.conn.close(); } catch(_e){}
+        removeConnection(code);
+      });
+      connectedBadges.appendChild(badge);
+    }
   }
 
   connectBtn.addEventListener('click', () => {
     const code = peerInput.value.trim().toUpperCase();
     if(code.length < 4) return;
-    setStatus('Connexion en cours…');
+    if(activeConnections.has(code)){
+      setStatus('<span class="err">Déjà connecté à cet appareil</span>');
+      return;
+    }
+    connectToCode(code);
+    peerInput.value = '';
+  });
+
+  function connectToCode(code){
     const c = peer.connect('fd-' + code, { reliable: true });
     setupConnection(c);
-  });
+  }
 
   peerInput.addEventListener('keydown', (e) => {
     if(e.key === 'Enter') connectBtn.click();
@@ -1075,38 +1383,58 @@
   }
 
   async function sendFile(file, onFinished){
-    if(!conn || !conn.open){ onFinished(); return; }
-    const logItem = addLogItem(file.name, file.size, 'out');
-    conn.send({ type: 'meta', name: file.name, size: file.size });
+    const recipients = [...activeConnections.values()].map(e => e.conn).filter(c => c && c.open);
+    if(recipients.length === 0){ onFinished(); return; }
 
-    const dc = conn.dataChannel;
-    const BUFFER_LIMIT = 4 * 1024 * 1024; // 4 Mo max en attente avant de faire une pause
+    const label = recipients.length === 1 ? file.name : (file.name + ' → ' + recipients.length + ' appareils');
+    const logItem = addLogItem(label, file.size, 'out');
 
-    try {
-      let offset = 0;
-      while(offset < file.size){
-        // pause si le tampon d'envoi est trop plein, pour ne pas saturer le canal
-        if(dc && dc.bufferedAmount > BUFFER_LIMIT){
-          await new Promise(resolve => {
-            const check = () => {
-              if(!dc || dc.bufferedAmount <= BUFFER_LIMIT) resolve();
-              else requestAnimationFrame(check);
-            };
-            check();
-          });
-        }
-        const slice = file.slice(offset, offset + CHUNK_SIZE);
-        const buffer = await slice.arrayBuffer();
-        conn.send(buffer);
-        offset += buffer.byteLength;
-        updateLogItem(logItem, offset / file.size);
-      }
-      markDone(logItem);
-      onFinished();
-    } catch(e){
-      logItem.classList.add('error');
-      onFinished();
+    // Progression agrégée : moyenne des avancées de chaque destinataire
+    const progressPerRecipient = recipients.map(() => 0);
+    function reportProgress(idx, ratio){
+      progressPerRecipient[idx] = ratio;
+      const avg = progressPerRecipient.reduce((a,b) => a+b, 0) / progressPerRecipient.length;
+      updateLogItem(logItem, avg);
     }
+
+    const results = await Promise.all(
+      recipients.map((c, idx) => sendFileToOne(file, c, ratio => reportProgress(idx, ratio)))
+    );
+
+    const allOk = results.every(r => r);
+    if(allOk) markDone(logItem); else logItem.classList.add('error');
+    onFinished();
+  }
+
+  function sendFileToOne(file, conn, onProgress){
+    return new Promise(async (resolve) => {
+      try {
+        conn.send({ type: 'meta', name: file.name, size: file.size });
+        const dc = conn.dataChannel;
+        const BUFFER_LIMIT = 4 * 1024 * 1024; // 4 Mo max en attente avant de faire une pause
+
+        let offset = 0;
+        while(offset < file.size){
+          if(dc && dc.bufferedAmount > BUFFER_LIMIT){
+            await new Promise(r => {
+              const check = () => {
+                if(!dc || dc.bufferedAmount <= BUFFER_LIMIT) r();
+                else requestAnimationFrame(check);
+              };
+              check();
+            });
+          }
+          const slice = file.slice(offset, offset + CHUNK_SIZE);
+          const buffer = await slice.arrayBuffer();
+          conn.send(buffer);
+          offset += buffer.byteLength;
+          onProgress(offset / file.size);
+        }
+        resolve(true);
+      } catch(e){
+        resolve(false);
+      }
+    });
   }
 
   function addLogItem(name, size, direction){
@@ -1144,6 +1472,7 @@
 
   initPeer();
   renderKnownDevices();
+  renderGroups();
 
   // ============================================================
   //  Onglets
