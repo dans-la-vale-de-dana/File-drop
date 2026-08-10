@@ -1982,14 +1982,19 @@
 
   // Relaye aussi un message envoyé depuis FileDrop vers Discord, si le pont est actif
   async function relayToDiscord(text){
-    if(!discordBridgeEnabled || !sb) return;
+    if(!discordBridgeEnabled){ console.warn('[Discord bridge] désactivé, rien envoyé'); return; }
+    if(!sb){ console.warn('[Discord bridge] Supabase non initialisé (sb est null)'); return; }
     try {
-      await sb.from('bridge_messages').insert({
+      const { error } = await sb.from('bridge_messages').insert({
         source: 'filedrop',
         author: myDevice.label,
         text: text
       });
-    } catch(_e){}
+      if(error) console.error('[Discord bridge] Erreur insertion Supabase :', error);
+      else console.log('[Discord bridge] Message envoyé vers Supabase avec succès');
+    } catch(e){
+      console.error('[Discord bridge] Exception :', e);
+    }
   }
 
   function handleAuthState(user){
