@@ -1084,7 +1084,7 @@
     let connected = 0, skipped = 0;
     for(const code of group.codes){
       if(activeConnections.has(code)){ skipped++; continue; }
-      connectToCode(code);
+      connectToCode(code, group.name);
       connected++;
     }
     if(connected === 0 && skipped > 0){
@@ -1174,7 +1174,7 @@
     });
   }
 
-  function setupConnection(c){
+  function setupConnection(c, groupName){
     let remoteDevice = null; // rempli dès réception du message 'hello' de l'autre appareil
     let deviceHandled = false;
     let remoteCode = c.peer.replace('fd-','');
@@ -1201,9 +1201,9 @@
       if(c.dataChannel){
         try { c.dataChannel.binaryType = 'arraybuffer'; } catch(_e){}
       }
-      c.send({ type: 'hello', icon: myDevice.icon, label: myDevice.label });
+      c.send({ type: 'hello', icon: myDevice.icon, label: myDevice.label, groupName: groupName || null });
 
-      activeConnections.set(remoteCode, { conn: c, device: null });
+      activeConnections.set(remoteCode, { conn: c, device: null, groupName: groupName || null });
       refreshConnectionUI();
 
       setTimeout(() => finalizeDeviceRemembering(), 900);
@@ -1218,7 +1218,11 @@
          !ArrayBuffer.isView(data) && data.type === 'hello'){
         remoteDevice = { icon: data.icon, label: data.label };
         const entry = activeConnections.get(remoteCode);
-        if(entry) entry.device = remoteDevice;
+        if(entry){
+          entry.device = remoteDevice;
+          // Si l'autre appareil nous a reliés via un groupe, on l'affiche aussi de notre côté
+          if(data.groupName && !entry.groupName) entry.groupName = data.groupName;
+        }
         refreshConnectionUI();
         rememberDeviceIcon(remoteCode, data.icon);
         finalizeDeviceRemembering();
@@ -1281,12 +1285,15 @@
       dropHint.textContent = 'Connecte-toi d\'abord à un appareil';
     } else {
       beacon.classList.add('connected');
+      // Si toutes les connexions actives partagent le même nom de groupe, on l'affiche
+      const groupNames = [...new Set([...activeConnections.values()].map(e => e.groupName).filter(Boolean))];
+      const groupSuffix = groupNames.length === 1 ? ' · groupe "' + groupNames[0] + '"' : '';
       if(count === 1){
         const only = [...activeConnections.values()][0];
         const dev = only.device ? (only.device.icon + ' ' + only.device.label) : '';
-        setStatus('<span class="ok">Connecté' + (dev ? ' à ' + dev : '') + '</span>');
+        setStatus('<span class="ok">Connecté' + (dev ? ' à ' + dev : '') + groupSuffix + '</span>');
       } else {
-        setStatus('<span class="ok">Connecté à ' + count + ' appareils</span>');
+        setStatus('<span class="ok">Connecté à ' + count + ' appareils' + groupSuffix + '</span>');
       }
       dropzone.classList.remove('disabled');
       dropHint.textContent = count === 1
@@ -1300,7 +1307,8 @@
       badge.className = 'connected-badge';
       const icon = entry.device ? entry.device.icon : '💻';
       const label = entry.device ? entry.device.label : code;
-      badge.innerHTML = '<span>' + icon + ' ' + escapeHtml(label) + '</span><span class="x">✕</span>';
+      const groupPart = entry.groupName ? (' <span style="opacity:.7;">· ' + escapeHtml(entry.groupName) + '</span>') : '';
+      badge.innerHTML = '<span>' + icon + ' ' + escapeHtml(label) + groupPart + '</span><span class="x">✕</span>';
       badge.querySelector('.x').addEventListener('click', () => {
         try { entry.conn.close(); } catch(_e){}
         removeConnection(code);
@@ -1320,9 +1328,9 @@
     peerInput.value = '';
   });
 
-  function connectToCode(code){
+  function connectToCode(code, groupName){
     const c = peer.connect('fd-' + code, { reliable: true });
-    setupConnection(c);
+    setupConnection(c, groupName || null);
   }
 
   peerInput.addEventListener('keydown', (e) => {
@@ -1492,8 +1500,8 @@
 
   // ⚠️ Remplace ces deux valeurs par celles de TON projet Supabase
   // (Project Settings → API → Project URL / anon public key)
-  const supabaseUrl = "REMPLACE_MOI";
-  const supabaseAnonKey = "REMPLACE_MOI";
+  const supabaseUrl = "https://kzzzehugyggvapgrxkwi.supabase.co";
+  const supabaseAnonKey = "sb_publishable_7gPGuXmBsCC6Szxb4RigAw_zusP1Nc3";
   const BUCKET = "files";
 
   const supabaseReady = supabaseUrl !== "REMPLACE_MOI";
